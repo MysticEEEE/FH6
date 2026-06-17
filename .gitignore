@@ -1,0 +1,36 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local runtime files
+config.json
+bot_config.json
+bot-config.json
+bot_log.txt
+*.log
+*.ahk
+
+# Build outputs
+build/
+dist/
+*.spec
+
+# Runtime caches and temporary folders
+cache/
+obf_temp/
+other/
+oldversion/
+bk/
+debug/
+
+# IDE / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
