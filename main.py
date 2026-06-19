@@ -1177,6 +1177,18 @@ class FH_UltimateBot(ctk.CTk):
             self.yolo_car_select_model_path = None
             return None
 
+    def resolve_ai_device(self):
+        configured = str(self.config.get("ai_device", "auto")).strip().lower()
+        try:
+            import torch
+            if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                return configured if configured and configured != "auto" else "0"
+        except Exception:
+            pass
+        if configured in ("cpu", "mps"):
+            return configured
+        return "cpu"
+
     def yolo_box_to_dict(self, item, conf_threshold=0.25):
         conf = float(item.conf[0])
         if conf < conf_threshold:
@@ -1356,7 +1368,7 @@ class FH_UltimateBot(ctk.CTk):
                 source=screen_bgr,
                 imgsz=int(self.config.get("ai_imgsz", 960)),
                 conf=float(self.config.get("ai_conf", 0.25)),
-                device=str(self.config.get("ai_device", "0")),
+                device=self.resolve_ai_device(),
                 verbose=False,
             )[0]
             boxes = []
