@@ -343,6 +343,12 @@ class FH_UltimateBot(ctk.CTk):
         self.last_positions = {}
         self.edge_template_cache = {}
         self.scaled_edge_template_cache = {}
+        self.strict_car_debug_seq = 0
+        self.strict_car_debug_last_miss_save = 0.0
+        self.ai_car_debug_seq = 0
+        self.ai_car_debug_last_miss_save = 0.0
+        self.yolo_car_select_model = None
+        self.yolo_car_select_model_path = None
 
         self.init_regions()
         
@@ -473,7 +479,9 @@ class FH_UltimateBot(ctk.CTk):
             "share_code": "890169683", 
             "auto_restart": False,
             "restart_cmd": "start steam://run/2483190", 
-            "race_timeout": 300
+            "race_timeout": 300,
+            "ai_assist": False,
+            "ai_model_path": "models/fh6_car_select_yolo.pt"
         }
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json，并与底本合并（自动补全缺失项）
@@ -513,6 +521,8 @@ class FH_UltimateBot(ctk.CTk):
         self.config["chk_2"] = self.var_chk2.get()
         self.config["chk_3"] = self.var_chk3.get()
         self.config["auto_restart"] = self.var_auto_restart.get()
+        if hasattr(self, "var_ai_assist"):
+            self.config["ai_assist"] = self.var_ai_assist.get()
         self.config["restart_cmd"] = self.le_restart_cmd.get().strip()
         try:
             with open(USER_CONFIG_FILE, "w", encoding="utf-8") as f:
@@ -680,6 +690,19 @@ class FH_UltimateBot(ctk.CTk):
             font=ctk.CTkFont(size=14),
         )
         self.lbl_cj.pack(pady=(2, 6))
+
+        self.var_ai_assist = ctk.BooleanVar(value=self.config.get("ai_assist", False))
+        self.sw_ai_assist = ctk.CTkSwitch(
+            left_cj,
+            text="AI辅助",
+            variable=self.var_ai_assist,
+            command=self.on_ai_assist_changed,
+            width=92,
+            progress_color="#8E44AD",
+            button_color="#D7BDE2",
+            button_hover_color="#E8DAEF",
+        )
+        self.sw_ai_assist.pack(pady=(0, 5))
 
         dir_frame = ctk.CTkFrame(left_cj, fg_color="transparent")
         dir_frame.pack(pady=4)
@@ -1091,6 +1114,390 @@ class FH_UltimateBot(ctk.CTk):
             except Exception:
                 pass
         self.ui_call(write_ui)
+
+    def write_debug_image(self, path, image_bgr):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            ok, buf = cv2.imencode(".png", image_bgr)
+            if ok:
+                buf.tofile(path)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def on_ai_assist_changed(self):
+        enabled = bool(self.var_ai_assist.get())
+        self.config["ai_assist"] = enabled
+        if not enabled:
+            self.yolo_car_select_model = None
+            self.yolo_car_select_model_path = None
+        self.save_config()
+        self.log("AI assist enabled." if enabled else "AI assist disabled.")
+
+    def resolve_ai_model_path(self):
+        candidates = []
+        configured = str(self.config.get("ai_model_path", "")).strip()
+        if configured:
+            candidates.append(configured)
+        candidates.extend([
+            "models/fh6_car_select_yolo.pt",
+            "runs/detect/fh6_car_select/yolo11n_all_boxes_v2/weights/best.pt",
+            "runs/detect/fh6_car_select/yolo11n_all_boxes/weights/best.pt",
+            "runs/detect/runs/fh6_car_select/yolo11n_draft/weights/best.pt",
+        ])
+        seen = set()
+        for item in candidates:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            path = item if os.path.isabs(item) else os.path.join(get_app_dir(), item)
+            if os.path.exists(path):
+                return path
+        return None
+
+    def get_yolo_car_select_model(self):
+        if not self.config.get("ai_assist", False):
+            return None
+        model_path = self.resolve_ai_model_path()
+        if not model_path:
+            self.log("[AISelect] model not found. Put best.pt at models/fh6_car_select_yolo.pt or update config.json ai_model_path.")
+            return None
+        if self.yolo_car_select_model is not None and self.yolo_car_select_model_path == model_path:
+            return self.yolo_car_select_model
+        try:
+            from ultralytics import YOLO
+            self.yolo_car_select_model = YOLO(model_path)
+            self.yolo_car_select_model_path = model_path
+            self.log(f"[AISelect] model loaded: {model_path}")
+            return self.yolo_car_select_model
+        except Exception as e:
+            self.log(f"[AISelect] cannot load YOLO model: {e}")
+            self.yolo_car_select_model = None
+            self.yolo_car_select_model_path = None
+            return None
+
+    def yolo_box_to_dict(self, item, conf_threshold=0.25):
+        conf = float(item.conf[0])
+        if conf < conf_threshold:
+            return None
+        cls_id = int(item.cls[0])
+        names = {0: "new", 1: "b600", 2: "car"}
+        x1, y1, x2, y2 = [float(v) for v in item.xyxy[0].tolist()]
+        return {
+            "cls": cls_id,
+            "name": names.get(cls_id, f"class_{cls_id}"),
+            "conf": conf,
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "w": x2 - x1,
+            "h": y2 - y1,
+            "cx": (x1 + x2) / 2.0,
+            "cy": (y1 + y2) / 2.0,
+        }
+
+    def yolo_yellow_tag_ratio(self, img, box):
+        try:
+            x1 = max(0, int(box["x1"]))
+            y1 = max(0, int(box["y1"]))
+            x2 = min(img.shape[1], int(box["x2"]))
+            y2 = min(img.shape[0], int(box["y2"]))
+            roi = img[y1:y2, x1:x2]
+            if roi.size == 0:
+                return 0.0
+            hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, np.array([24, 90, 170]), np.array([42, 255, 255]))
+            return float(np.count_nonzero(mask)) / max(1, mask.size)
+        except Exception:
+            return 0.0
+
+    def yolo_box_distance(self, a, b):
+        return float(np.hypot(a["cx"] - b["cx"], a["cy"] - b["cy"]))
+
+    def find_yolo_car_candidate(self, img, boxes, min_tag_yellow_ratio=0.18):
+        image_h, image_w = img.shape[:2]
+        tags = [b for b in boxes if b["name"] == "new"]
+        classes = [b for b in boxes if b["name"] == "b600"]
+        cars = [b for b in boxes if b["name"] == "car"]
+        failures = []
+        candidates = []
+
+        for tag in sorted(tags, key=lambda b: (b["y1"], b["x1"])):
+            if tag["x1"] < image_w * 0.20 or tag["y1"] < image_h * 0.16 or tag["y1"] > image_h * 0.92:
+                failures.append(f"tag out area conf={tag['conf']:.2f}")
+                continue
+            yellow_ratio = self.yolo_yellow_tag_ratio(img, tag)
+            if yellow_ratio < min_tag_yellow_ratio:
+                failures.append(f"tag color low conf={tag['conf']:.2f} yellow={yellow_ratio:.2f}")
+                continue
+
+            near_classes = []
+            for cls_box in classes:
+                dx = cls_box["cx"] - tag["cx"]
+                dy = cls_box["cy"] - tag["cy"]
+                if -120 <= dx <= 80 and -12 <= dy <= 80:
+                    near_classes.append((abs(dx) + abs(dy), cls_box))
+            if not near_classes:
+                failures.append(f"no B600 near tag conf={tag['conf']:.2f}")
+                continue
+            near_classes.sort(key=lambda item: item[0])
+            cls_box = near_classes[0][1]
+
+            near_cars = []
+            for car in cars:
+                if car["w"] <= 0 or car["h"] <= 0:
+                    continue
+                rel_x = tag["cx"] - car["x1"]
+                rel_y = tag["cy"] - car["y1"]
+                if 0.58 * car["w"] <= rel_x <= 1.12 * car["w"] and 0.50 * car["h"] <= rel_y <= 1.12 * car["h"]:
+                    near_cars.append((self.yolo_box_distance(tag, car), car))
+            if not near_cars:
+                failures.append(f"no target car linked conf={tag['conf']:.2f}")
+                continue
+            near_cars.sort(key=lambda item: item[0])
+            car = near_cars[0][1]
+            score = tag["conf"] * 0.34 + cls_box["conf"] * 0.28 + car["conf"] * 0.38
+            candidates.append({
+                "tag": tag,
+                "b600": cls_box,
+                "car": car,
+                "score": score,
+                "yellow": yellow_ratio,
+                "reason": "pass",
+            })
+
+        if not candidates:
+            reason = "; ".join(failures[-4:]) if failures else "no candidates"
+            return None, reason
+
+        candidates.sort(key=lambda c: (c["tag"]["y1"], c["tag"]["x1"], -c["score"]))
+        return candidates[0], "pass"
+
+    def save_ai_car_debug(self, screen_bgr, status, boxes=None, candidate=None, reason="", click=None, force=False):
+        try:
+            now = time.time()
+            if status == "miss" and not force:
+                if now - getattr(self, "ai_car_debug_last_miss_save", 0.0) < 1.5:
+                    return
+                self.ai_car_debug_last_miss_save = now
+
+            self.ai_car_debug_seq += 1
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            name = f"{stamp}_{self.ai_car_debug_seq:04d}_{status}"
+            root = os.path.join(get_app_dir(), "debug", "car_select_ai")
+            raw_path = os.path.join(root, "raw", f"{name}.png")
+            self.write_debug_image(raw_path, screen_bgr)
+
+            annotated = screen_bgr.copy()
+            colors = {
+                "new": (0, 255, 255),
+                "b600": (0, 128, 255),
+                "car": (0, 255, 0),
+            }
+            selected = []
+            if candidate:
+                selected = [candidate["tag"], candidate["b600"], candidate["car"]]
+            for box in boxes or []:
+                color = colors.get(box["name"], (255, 255, 255))
+                x1, y1, x2, y2 = [int(v) for v in (box["x1"], box["y1"], box["x2"], box["y2"])]
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(
+                    annotated,
+                    f"{box['name']} {box['conf']:.2f}",
+                    (x1, max(18, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+            for box in selected:
+                x1, y1, x2, y2 = [int(v) for v in (box["x1"], box["y1"], box["x2"], box["y2"])]
+                cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+            if click:
+                cx, cy = int(click[0]), int(click[1])
+                cv2.drawMarker(annotated, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 30, 2)
+                cv2.putText(
+                    annotated,
+                    f"CLICK {cx},{cy}",
+                    (cx + 8, max(20, cy - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+            if reason:
+                cv2.putText(
+                    annotated,
+                    reason[:130],
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0, 255, 0) if candidate else (0, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+            out_dir = "pass" if status == "pass" else "miss"
+            self.write_debug_image(os.path.join(root, out_dir, f"{name}.png"), annotated)
+        except Exception as e:
+            self.log(f"[AISelect] save debug failed: {e}")
+
+    def find_new_consumable_car_ai(self, region=None, save_miss=True):
+        model = self.get_yolo_car_select_model()
+        if model is None:
+            return None
+        try:
+            screen_bgr = self.capture_region(region)
+            result = model.predict(
+                source=screen_bgr,
+                imgsz=int(self.config.get("ai_imgsz", 960)),
+                conf=float(self.config.get("ai_conf", 0.25)),
+                device=str(self.config.get("ai_device", "0")),
+                verbose=False,
+            )[0]
+            boxes = []
+            if result.boxes is not None:
+                for item in result.boxes:
+                    box = self.yolo_box_to_dict(item, conf_threshold=float(self.config.get("ai_conf", 0.25)))
+                    if box:
+                        boxes.append(box)
+            candidate, reason = self.find_yolo_car_candidate(
+                screen_bgr,
+                boxes,
+                min_tag_yellow_ratio=float(self.config.get("ai_min_tag_yellow_ratio", 0.18)),
+            )
+            if not candidate:
+                counts = (
+                    f"new={sum(1 for b in boxes if b['name'] == 'new')} "
+                    f"b600={sum(1 for b in boxes if b['name'] == 'b600')} "
+                    f"car={sum(1 for b in boxes if b['name'] == 'car')}"
+                )
+                self.log(f"[AISelect] miss: {counts}; {reason}")
+                if save_miss:
+                    self.save_ai_car_debug(screen_bgr, "miss", boxes=boxes, reason=reason, force=True)
+                return None
+
+            click_local = (int(candidate["car"]["cx"]), int(candidate["car"]["cy"]))
+            click_abs = (
+                click_local[0] + (region[0] if region else 0),
+                click_local[1] + (region[1] if region else 0),
+            )
+            self.log(
+                f"[AISelect] pass: score={candidate['score']:.3f} "
+                f"new={candidate['tag']['conf']:.2f} yellow={candidate['yellow']:.2f} "
+                f"b600={candidate['b600']['conf']:.2f} car={candidate['car']['conf']:.2f}"
+            )
+            self.save_ai_car_debug(screen_bgr, "pass", boxes=boxes, candidate=candidate, reason="pass", click=click_local, force=True)
+            return click_abs
+        except Exception as e:
+            self.log(f"[AISelect] exception: {e}")
+            return None
+
+    def save_strict_car_debug(self, screen_bgr, status, reason="", boxes=None, scores=None, click=None, force=False):
+        try:
+            now = time.time()
+            if status == "miss" and not force:
+                # wait_for_new_consumable_car_strict 会循环调用，miss 图做节流即可。
+                if now - getattr(self, "strict_car_debug_last_miss_save", 0.0) < 1.5:
+                    return
+                self.strict_car_debug_last_miss_save = now
+
+            self.strict_car_debug_seq += 1
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            name = f"{stamp}_{self.strict_car_debug_seq:04d}_{status}"
+            root = os.path.join(get_app_dir(), "debug", "car_select")
+            if status == "pass":
+                self.cleanup_recent_strict_car_miss(root, keep_seconds=12.0)
+
+            raw_path = os.path.join(root, "raw", f"{name}.png")
+            self.write_debug_image(raw_path, screen_bgr)
+
+            annotated = screen_bgr.copy()
+            color_map = {
+                "new": (0, 255, 255),
+                "b600": (0, 128, 255),
+                "car": (0, 255, 0),
+            }
+            for label, rect in (boxes or {}).items():
+                if not rect:
+                    continue
+                x, y, w, h = [int(v) for v in rect]
+                color = color_map.get(label, (255, 255, 255))
+                cv2.rectangle(annotated, (x, y), (x + w, y + h), color, 2)
+                score = ""
+                if scores and label in scores:
+                    score = f" {scores[label]:.2f}"
+                cv2.putText(
+                    annotated,
+                    f"{label}{score}",
+                    (x, max(20, y - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    color,
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            if click:
+                cx, cy = int(click[0]), int(click[1])
+                cv2.drawMarker(annotated, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 28, 2)
+                cv2.putText(
+                    annotated,
+                    f"CLICK {cx},{cy}",
+                    (cx + 8, max(20, cy - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            if reason:
+                cv2.putText(
+                    annotated,
+                    reason[:120],
+                    (12, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    (0, 0, 255) if status == "miss" else (0, 255, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
+
+            out_dir = "pass" if status == "pass" else "miss"
+            annotated_path = os.path.join(root, out_dir, f"{name}.png")
+            self.write_debug_image(annotated_path, annotated)
+        except Exception as e:
+            self.log(f"保存 StrictCar 调试图异常: {e}")
+
+    def cleanup_recent_strict_car_miss(self, root, keep_seconds=12.0):
+        try:
+            now = time.time()
+            miss_dir = os.path.join(root, "miss")
+            raw_dir = os.path.join(root, "raw")
+            if not os.path.isdir(miss_dir):
+                return
+
+            for filename in os.listdir(miss_dir):
+                if not filename.lower().endswith(".png"):
+                    continue
+                miss_path = os.path.join(miss_dir, filename)
+                try:
+                    if now - os.path.getmtime(miss_path) > keep_seconds:
+                        continue
+                    os.remove(miss_path)
+                    raw_name = filename.replace("_miss.png", "_miss.png")
+                    raw_path = os.path.join(raw_dir, raw_name)
+                    if os.path.exists(raw_path):
+                        os.remove(raw_path)
+                except Exception:
+                    pass
+        except Exception:
+            pass
     def start_pipeline(self, start_step):
         if self.is_running:
             return
@@ -2332,6 +2739,246 @@ class FH_UltimateBot(ctk.CTk):
 
         return None
 
+    def find_skill_car_with_like_tag(self, region=None, timeout=3.0, interval=0.25):
+        start = time.time()
+        while self.is_running and time.time() - start < timeout:
+            pos = self.find_image_with_element_multi(
+                "skillcar.png",
+                "liketag.png",
+                region=region,
+                fast_mode=True,
+                main_threshold=0.75,
+                like_threshold=0.68,
+                final_threshold=0.68,
+            )
+            if pos:
+                return pos
+
+            pos = self.find_skill_car_from_like_tag(region=region)
+            if pos:
+                return pos
+
+            time.sleep(interval)
+        return None
+
+    def find_skill_car_from_like_tag(self, region=None):
+        if not self.is_running:
+            return None
+        try:
+            screen_bgr = self.capture_region(region)
+            scales_to_try = self.get_scales_to_try(fast_mode=False)
+            best_debug = None
+
+            for scale in scales_to_try:
+                car_tpl, _ = self.get_scaled_template("skillcar.png", scale)
+                tag_tpl, _ = self.get_scaled_template("liketag.png", scale)
+                if car_tpl is None or tag_tpl is None:
+                    continue
+
+                h_c, w_c = car_tpl.shape[:2]
+                h_t, w_t = tag_tpl.shape[:2]
+                if h_c < 5 or w_c < 5 or h_t < 3 or w_t < 3:
+                    continue
+                if h_t > screen_bgr.shape[0] or w_t > screen_bgr.shape[1]:
+                    continue
+
+                tag_res = cv2.matchTemplate(screen_bgr, tag_tpl, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(tag_res >= 0.66)
+                tag_points = [(int(y), int(x), float(tag_res[y, x])) for y, x in zip(ys, xs)]
+                tag_points.sort(key=lambda p: (p[0], p[1], -p[2]))
+                checked_tags = set()
+
+                for ty, tx, tag_score in tag_points[:80]:
+                    key = (tx // 8, ty // 8)
+                    if key in checked_tags:
+                        continue
+                    checked_tags.add(key)
+
+                    sx1 = max(0, int(tx - w_c * 1.10))
+                    sy1 = max(0, int(ty - h_c * 1.10))
+                    sx2 = min(screen_bgr.shape[1], int(tx + w_t + w_c * 0.45))
+                    sy2 = min(screen_bgr.shape[0], int(ty + h_t + h_c * 0.45))
+                    search = screen_bgr[sy1:sy2, sx1:sx2]
+                    if search.shape[0] < h_c or search.shape[1] < w_c:
+                        continue
+
+                    car_res = cv2.matchTemplate(search, car_tpl, cv2.TM_CCOEFF_NORMED)
+                    _, car_score, _, car_loc = cv2.minMaxLoc(car_res)
+                    card_x = sx1 + car_loc[0]
+                    card_y = sy1 + car_loc[1]
+
+                    rel_x = tx - card_x
+                    rel_y = ty - card_y
+                    if not (-int(w_c * 0.08) <= rel_x <= int(w_c * 1.08) and -int(h_c * 0.08) <= rel_y <= int(h_c * 1.08)):
+                        best_debug = f"rel invalid tag:{tag_score:.3f} car:{car_score:.3f} rel:{rel_x},{rel_y} scale:{scale:.3f}"
+                        continue
+                    if car_score < 0.58:
+                        best_debug = f"car low tag:{tag_score:.3f} car:{car_score:.3f} scale:{scale:.3f}"
+                        continue
+
+                    click_x = card_x + w_c // 2 + (region[0] if region else 0)
+                    click_y = card_y + h_c // 2 + (region[1] if region else 0)
+                    self.log(
+                        f"[SkillCar] reverse hit: tag={tag_score:.3f} car={car_score:.3f} "
+                        f"rel=({rel_x},{rel_y}) scale={scale:.3f}"
+                    )
+                    return (click_x, click_y)
+
+            if best_debug:
+                self.log(f"[SkillCar] reverse miss: {best_debug}")
+            return None
+        except Exception as e:
+            self.log(f"find_skill_car_from_like_tag exception: {e}")
+            return None
+
+    def should_switch_skillcar_after_cj(self):
+        try:
+            return bool(self.var_chk3.get()) and int(self.entry_next3.get()) == 1
+        except Exception:
+            return bool(self.config.get("chk_3", True)) and int(self.config.get("next_3", 1)) == 1
+
+    def switch_to_liked_skillcar_in_car_list(self):
+        self.log("[SkillCar] 超抽后下一步为跑图，准备切换到带 liketag 的刷图车。")
+
+        pos_target = None
+        for _ in range(30):
+            if not self.is_running:
+                return False
+
+            pos_target = self.find_skill_car_with_like_tag(
+                region=self.regions["全界面"],
+                timeout=1.2,
+                interval=0.2,
+            )
+            if pos_target:
+                break
+
+            for _ in range(4):
+                self.hw_press("right", delay=0.06)
+                time.sleep(0.08)
+            time.sleep(0.35)
+
+        if not pos_target:
+            self.log("[SkillCar] 未找到带 liketag 的刷图车，无法切换到跑图车辆。")
+            return False
+
+        self.game_click(pos_target)
+        time.sleep(1.0)
+
+        pos_rc = self.wait_for_image_gray(
+            "rc.png",
+            region=self.regions["全界面"],
+            threshold=0.70,
+            timeout=2.0,
+            interval=0.2,
+            fast_mode=True,
+        )
+        if pos_rc:
+            self.log("[SkillCar] 点击上车。")
+            self.game_click(pos_rc)
+        else:
+            self.log("[SkillCar] 未找到上车按钮，尝试回车上车。")
+            self.hw_press("enter")
+            time.sleep(0.8)
+            self.hw_press("enter")
+
+        time.sleep(1.5)
+        self.hw_press("tab")
+        time.sleep(5.0)
+        self.log("[SkillCar] 已切换到刷图车并返回漫游。")
+        return True
+
+    def prepare_skillcar_for_next_race_after_cj(self):
+        self.log("[SkillCar] 准备复用超抽车辆列表流程切换刷图车。")
+        self.log("[SkillCar] 复用当前超抽车辆列表上下文，进入我的车辆。")
+        if not self.enter_my_cars_from_vehicle_menu():
+            return False
+        self.hw_press("backspace")
+        time.sleep(1.0)
+
+        brand_pos = None
+        for _ in range(30):
+            if not self.is_running:
+                return False
+
+            brand_pos = self.wait_for_image_gray(
+                "skillcarbrand.png",
+                region=self.regions["全界面"],
+                threshold=0.76,
+                timeout=0.8,
+                interval=0.2,
+                fast_mode=True,
+            )
+            if brand_pos:
+                break
+
+            self.hw_press("up")
+            time.sleep(0.25)
+
+        if not brand_pos:
+            self.log("[SkillCar] 未找到斯巴鲁品牌。")
+            return False
+
+        self.game_click(brand_pos)
+        time.sleep(1.0)
+
+        return self.switch_to_liked_skillcar_in_car_list()
+
+    def enter_my_cars_from_vehicle_menu(self):
+        pos_uat = None
+        for _ in range(12):
+            if not self.is_running:
+                return False
+
+            pos_uat = self.find_any_image_gray(
+                ["UandT-w.png", "UandT-b.png"],
+                region=self.regions["全界面"],
+                threshold=0.62,
+                fast_mode=False,
+            )
+            if pos_uat:
+                break
+            time.sleep(0.2)
+
+        if pos_uat:
+            self.log("[CJ] 已确认车辆菜单，使用方向键重置到我的车辆。")
+        else:
+            self.log("[CJ] 未识别升级与调校，仍尝试用方向键重置到我的车辆。")
+
+        for _ in range(6):
+            if not self.is_running:
+                return False
+            self.hw_press("up", delay=0.05)
+            time.sleep(0.05)
+
+        self.hw_press("enter")
+        time.sleep(2.0)
+        return True
+
+    def return_to_vehicle_menu_after_mastery(self):
+        self.hw_press("esc")
+        time.sleep(1.4)
+        self.hw_press("esc")
+        time.sleep(1.0)
+
+        for _ in range(8):
+            if not self.is_running:
+                return False
+
+            pos_uat = self.find_any_image_gray(
+                ["UandT-w.png", "UandT-b.png"],
+                region=self.regions["全界面"],
+                threshold=0.62,
+                fast_mode=False,
+            )
+            if pos_uat:
+                self.log("[CJ] 已返回车辆菜单。")
+                return True
+            time.sleep(0.2)
+
+        self.log("[CJ] 未确认车辆菜单，继续下一步尝试。")
+        return True
+
     def load_template_transparent(self, template_path):
         """专门加载带有 Alpha 透明通道的图片"""
         actual_path = get_img_path(template_path)
@@ -2662,7 +3309,7 @@ class FH_UltimateBot(ctk.CTk):
             self.log(f"validate_new_tag_grid_fallback 异常: {e}")
             return None
 
-    def find_new_consumable_car_strict(self, region=None):
+    def find_new_consumable_car_strict(self, region=None, save_miss=False):
         if not self.is_running:
             return None
         try:
@@ -2675,6 +3322,7 @@ class FH_UltimateBot(ctk.CTk):
                 if s not in scales:
                     scales.append(s)
 
+            final_debug = None
             for scale in scales:
                 main_tpl, _ = self.get_scaled_template("newCC.png", scale)
                 tag_tpl, _ = self.get_scaled_template("newcartag.png", scale)
@@ -2716,6 +3364,7 @@ class FH_UltimateBot(ctk.CTk):
                     self.log(f"[StrictCar] 缩放 {scale:.3f} 未找到全新标签候选。")
                     continue
 
+                last_debug = None
                 for ty, tx, tag_score in tag_candidates:
                     # 验证 2：全新标签下方/左下方必须能找到目标等级 B600。
                     cx1 = max(0, int(tx - w_c * 1.45))
@@ -2729,6 +3378,11 @@ class FH_UltimateBot(ctk.CTk):
                     class_res = cv2.matchTemplate(class_search, class_tpl, cv2.TM_CCOEFF_NORMED)
                     _, class_score, _, class_loc = cv2.minMaxLoc(class_res)
                     if class_score < 0.58:
+                        last_debug = {
+                            "reason": f"class low NEW:{tag_score:.3f} B600:{class_score:.3f} scale:{scale:.3f}",
+                            "boxes": {"new": (tx, ty, w_t, h_t)},
+                            "scores": {"new": tag_score, "b600": float(class_score)},
+                        }
                         self.log(
                             f"[StrictCar] 全新通过但等级不符: NEW:{tag_score:.3f} "
                             f"B600:{class_score:.3f} 缩放:{scale:.3f}"
@@ -2741,8 +3395,8 @@ class FH_UltimateBot(ctk.CTk):
                     # 验证 3：以全新标签为锚点，只向左上方缩放搜索目标车辆卡片。
                     sx1 = max(0, int(tx - w_m * 1.12))
                     sy1 = max(0, int(ty - h_m * 1.08))
-                    sx2 = min(screen_bgr.shape[1], int(tx - w_m * 0.05 + w_t))
-                    sy2 = min(screen_bgr.shape[0], int(ty - h_m * 0.05 + h_t))
+                    sx2 = min(screen_bgr.shape[1], int(tx + w_t + w_m * 0.12))
+                    sy2 = min(screen_bgr.shape[0], int(ty + h_t + h_m * 0.18))
                     search = screen_bgr[sy1:sy2, sx1:sx2]
                     if search.shape[0] < h_m or search.shape[1] < w_m:
                         continue
@@ -2751,29 +3405,124 @@ class FH_UltimateBot(ctk.CTk):
                     _, near_score, _, near_loc = cv2.minMaxLoc(near_res)
                     card_x = sx1 + near_loc[0]
                     card_y = sy1 + near_loc[1]
+                    card_roi = screen_bgr[card_y:card_y + h_m, card_x:card_x + w_m]
+                    if card_roi.shape[:2] != main_tpl.shape[:2]:
+                        continue
 
                     tag_rel_x = tx - card_x
                     tag_rel_y = ty - card_y
+                    boxes = {
+                        "new": (tx, ty, w_t, h_t),
+                        "b600": (class_x, class_y, w_c, h_c),
+                        "car": (card_x, card_y, w_m, h_m),
+                    }
+                    scores = {
+                        "new": tag_score,
+                        "b600": float(class_score),
+                        "car": float(near_score),
+                    }
                     if not (int(w_m * 0.62) <= tag_rel_x <= int(w_m * 1.08) and int(h_m * 0.55) <= tag_rel_y <= int(h_m * 1.08)):
+                        last_debug = {
+                            "reason": f"rel invalid NEW:{tag_score:.3f} car:{near_score:.3f} rel:{tag_rel_x},{tag_rel_y} scale:{scale:.3f}",
+                            "boxes": boxes,
+                            "scores": scores,
+                        }
                         self.log(
                             f"[StrictCar] 标签附近目标车位置不符: NEW:{tag_score:.3f} "
                             f"近邻:{near_score:.3f} 相对:({tag_rel_x},{tag_rel_y}) 缩放:{scale:.3f}"
                         )
                         continue
 
-                    if near_score >= 0.56:
+                    if near_score < 0.56:
+                        last_debug = {
+                            "reason": f"car low NEW:{tag_score:.3f} B600:{class_score:.3f} car:{near_score:.3f} scale:{scale:.3f}",
+                            "boxes": boxes,
+                            "scores": scores,
+                        }
                         self.log(
-                            f"[StrictCar] 全新+B600+目标车通过: NEW:{tag_score:.3f} B600:{class_score:.3f} "
-                            f"目标:{near_score:.3f} 标签相对:({tag_rel_x},{tag_rel_y}) "
-                            f"等级:({class_x},{class_y}) 缩放:{scale:.3f}"
+                            f"[StrictCar] 标签附近目标车分数不足: NEW:{tag_score:.3f} "
+                            f"目标:{near_score:.3f} 相对:({tag_rel_x},{tag_rel_y}) 缩放:{scale:.3f}"
                         )
-                        return (card_x + w_m // 2 + (region[0] if region else 0), card_y + h_m // 2 + (region[1] if region else 0))
+                        continue
 
+                    pad = max(4, int(5 * scale))
+                    top_h = int(h_m * 0.24)
+                    tpl_top = cv2.cvtColor(main_tpl[:top_h, :], cv2.COLOR_BGR2GRAY)
+                    top_search_h = max(top_h + pad * 2, int(h_m * 0.34))
+                    roi_top = cv2.cvtColor(card_roi[:top_search_h, :], cv2.COLOR_BGR2GRAY)
+                    top_score = 0.0
+                    if tpl_top.shape[0] > pad * 2 and tpl_top.shape[1] > pad * 2:
+                        tpl_top_core = tpl_top[pad:-pad, pad:-pad]
+                        if roi_top.shape[0] >= tpl_top_core.shape[0] and roi_top.shape[1] >= tpl_top_core.shape[1]:
+                            top_res = cv2.matchTemplate(roi_top, tpl_top_core, cv2.TM_CCOEFF_NORMED)
+                            _, top_score, _, _ = cv2.minMaxLoc(top_res)
+                    if top_score < 0.72:
+                        last_debug = {
+                            "reason": f"top low NEW:{tag_score:.3f} B600:{class_score:.3f} car:{near_score:.3f} top:{top_score:.3f}",
+                            "boxes": boxes,
+                            "scores": {**scores, "top": float(top_score)},
+                        }
+                        self.log(
+                            f"[StrictCar] 车名区域验证失败: NEW:{tag_score:.3f} B600:{class_score:.3f} "
+                            f"目标:{near_score:.3f} 车名:{top_score:.3f} 缩放:{scale:.3f}"
+                        )
+                        continue
+
+                    bottom_h = int(h_m * 0.25)
+                    right_w = int(w_m * 0.35)
+                    tpl_bottom = main_tpl[h_m - bottom_h:, w_m - right_w:]
+                    roi_bottom = card_roi[h_m - int(h_m * 0.36):, w_m - int(w_m * 0.46):]
+                    bottom_score = 0.0
+                    if tpl_bottom.shape[0] > pad * 2 and tpl_bottom.shape[1] > pad * 2:
+                        tpl_bottom_core = tpl_bottom[pad:-pad, pad:-pad]
+                        if roi_bottom.shape[0] >= tpl_bottom_core.shape[0] and roi_bottom.shape[1] >= tpl_bottom_core.shape[1]:
+                            bottom_res = cv2.matchTemplate(roi_bottom, tpl_bottom_core, cv2.TM_CCOEFF_NORMED)
+                            _, bottom_score, _, _ = cv2.minMaxLoc(bottom_res)
+                    if bottom_score < 0.72:
+                        last_debug = {
+                            "reason": f"bottom low NEW:{tag_score:.3f} B600:{class_score:.3f} car:{near_score:.3f} top:{top_score:.3f} bottom:{bottom_score:.3f}",
+                            "boxes": boxes,
+                            "scores": {**scores, "top": float(top_score), "bottom": float(bottom_score)},
+                        }
+                        self.log(
+                            f"[StrictCar] 底部等级区域验证失败: NEW:{tag_score:.3f} B600:{class_score:.3f} "
+                            f"目标:{near_score:.3f} 车名:{top_score:.3f} 底部:{bottom_score:.3f} 缩放:{scale:.3f}"
+                        )
+                        continue
+
+                    click_x = card_x + w_m // 2 + (region[0] if region else 0)
+                    click_y = card_y + h_m // 2 + (region[1] if region else 0)
                     self.log(
-                        f"[StrictCar] 标签附近目标车分数不足: NEW:{tag_score:.3f} "
-                        f"目标:{near_score:.3f} 相对:({tag_rel_x},{tag_rel_y}) 缩放:{scale:.3f}"
+                        f"[StrictCar] 全新+B600+目标车通过: NEW:{tag_score:.3f} B600:{class_score:.3f} "
+                        f"目标:{near_score:.3f} 车名:{top_score:.3f} 底部:{bottom_score:.3f} "
+                        f"标签相对:({tag_rel_x},{tag_rel_y}) 等级:({class_x},{class_y}) 缩放:{scale:.3f}"
                     )
+                    self.save_strict_car_debug(
+                        screen_bgr,
+                        "pass",
+                        reason=f"pass scale:{scale:.3f}",
+                        boxes=boxes,
+                        scores={**scores, "top": float(top_score), "bottom": float(bottom_score)},
+                        click=(click_x - (region[0] if region else 0), click_y - (region[1] if region else 0)),
+                        force=True,
+                    )
+                    return (click_x, click_y)
 
+                if last_debug:
+                    final_debug = last_debug
+
+            if save_miss:
+                if final_debug:
+                    self.save_strict_car_debug(
+                        screen_bgr,
+                        "miss",
+                        reason=final_debug.get("reason", ""),
+                        boxes=final_debug.get("boxes"),
+                        scores=final_debug.get("scores"),
+                        force=True,
+                    )
+                else:
+                    self.save_strict_car_debug(screen_bgr, "miss", reason="no strict car candidate", force=True)
             return None
         except Exception as e:
             self.log(f"find_new_consumable_car_strict 异常: {e}")
@@ -2782,10 +3531,16 @@ class FH_UltimateBot(ctk.CTk):
     def wait_for_new_consumable_car_strict(self, timeout=3, interval=0.2):
         start = time.time()
         while self.is_running and time.time() - start < timeout:
-            pos = self.find_new_consumable_car_strict(region=self.regions["全界面"])
+            pos = self.find_new_consumable_car_strict(region=self.regions["全界面"], save_miss=False)
             if pos:
                 return pos
             time.sleep(interval)
+        if self.is_running and self.config.get("ai_assist", False):
+            pos = self.find_new_consumable_car_ai(region=self.regions["全界面"], save_miss=True)
+            if pos:
+                return pos
+        if self.is_running:
+            return self.find_new_consumable_car_strict(region=self.regions["全界面"], save_miss=True)
         return None
 
     def find_image_smart(self, template_path, primary_region=None, fallback_region=None, threshold=0.75, fast_mode=True):
@@ -3340,27 +4095,11 @@ class FH_UltimateBot(ctk.CTk):
         self.hw_press("enter")
         time.sleep(2.0)
 
-        pos_target = self.wait_for_image_with_element_multi(
-            "skillcar.png",
-            "liketag.png",
+        pos_target = self.find_skill_car_with_like_tag(
             region=self.regions["全界面"],
-            fast_mode=True,
-            main_threshold=0.75,
-            like_threshold=0.7,
-            final_threshold=0.7,
-            timeout=2,
+            timeout=2.0,
             interval=0.25
         )
-        if not pos_target:
-            self.log("组合识别未命中，尝试仅使用 skillcar.png 兜底识别...")
-            pos_target = self.wait_for_image(
-                "skillcar.png",
-                region=self.regions["全界面"],
-                threshold=0.68,
-                timeout=2,
-                interval=0.25,
-                fast_mode=False
-            )
 
         if not pos_target:
             self.log("未找到带 liketag 的目标车辆，重新选品牌...")
@@ -3390,27 +4129,11 @@ class FH_UltimateBot(ctk.CTk):
                 if not self.is_running:
                     return False
 
-                pos_target = self.wait_for_image_with_element_multi(
-                    "skillcar.png",
-                    "liketag.png",
+                pos_target = self.find_skill_car_with_like_tag(
                     region=self.regions["全界面"],
-                    main_threshold=0.75,
-                    like_threshold=0.7,
-                    final_threshold=0.7,
-                    timeout=2,
-                    interval=0.25,
-                    fast_mode=True
+                    timeout=2.0,
+                    interval=0.25
                 )
-                if not pos_target:
-                    self.log("组合识别未命中，尝试仅使用 skillcar.png 兜底识别...")
-                    pos_target = self.wait_for_image(
-                        "skillcar.png",
-                        region=self.regions["全界面"],
-                        threshold=0.68,
-                        timeout=1.0,
-                        interval=0.2,
-                        fast_mode=False
-                    )
                 if pos_target:
                     break
 
@@ -3766,8 +4489,8 @@ class FH_UltimateBot(ctk.CTk):
             if not self.is_running:
                 return False
             self.log("进入我的车辆.")
-            self.hw_press("enter")
-            time.sleep(2.0)
+            if not self.enter_my_cars_from_vehicle_menu():
+                return False
             self.hw_press("backspace")
             time.sleep(1.0)
 
@@ -3922,22 +4645,26 @@ class FH_UltimateBot(ctk.CTk):
                     time.sleep(1.0)
                     self.hw_press("esc")
                     time.sleep(1.0)
-                    self.hw_press("esc")
-                    time.sleep(1.0)
+                    if self.should_switch_skillcar_after_cj():
+                        if not self.prepare_skillcar_for_next_race_after_cj():
+                            return False
+                    else:
+                        self.hw_press("esc")
+                        time.sleep(1.0)
                     return True
                 self.cj_counter += 1
                 self.update_running_ui("超级抽奖", self.cj_counter, target_count)
 
+            if not self.return_to_vehicle_menu_after_mastery():
+                return False
+        if self.should_switch_skillcar_after_cj():
+            if not self.prepare_skillcar_for_next_race_after_cj():
+                return False
+        else:
             self.hw_press("esc")
             time.sleep(1.2)
             self.hw_press("esc")
-            time.sleep(0.8)
-            self.hw_press("up", delay=0.15)
-            time.sleep(0.8)
-        self.hw_press("esc")
-        time.sleep(1.2)
-        self.hw_press("esc")
-        time.sleep(1.2)
+            time.sleep(1.2)
         return True
 if __name__ == "__main__":
     app = FH_UltimateBot()

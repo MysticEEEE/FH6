@@ -6,6 +6,7 @@ __pycache__/
 # Virtual environments
 .venv/
 .buildvenv/
+.aivenv/
 venv/
 env/
 
@@ -22,6 +23,15 @@ build/
 dist/
 *.spec
 
+# AI training outputs
+models/
+runs/
+wandb/
+datasets/
+screenshot/
+*.pt
+*.onnx
+
 # Runtime caches and temporary folders
 cache/
 obf_temp/
@@ -29,6 +39,8 @@ other/
 oldversion/
 bk/
 debug/
+release/
+云盘分享/
 
 # IDE / OS files
 .idea/
