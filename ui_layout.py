@@ -284,6 +284,15 @@ def setup_ui(bot):
     bot.entry_race_timeout = entry(bot.global_settings_frame, width=68, height=30)
     bot.entry_race_timeout.insert(0, str(bot.config.get("race_timeout", 300)))
     bot.entry_race_timeout.pack(side="left", padx=(0, 16))
+    label(bot.global_settings_frame, "加速键", color=colors["muted"], font=font_small).pack(side="left", padx=(0, 6))
+    drive_keys = bot.config.get("drive_keys", ["w", "up"])
+    if isinstance(drive_keys, (list, tuple)):
+        drive_keys_text = ",".join(str(key) for key in drive_keys)
+    else:
+        drive_keys_text = str(drive_keys)
+    bot.entry_drive_keys = entry(bot.global_settings_frame, width=86, height=30)
+    bot.entry_drive_keys.insert(0, drive_keys_text)
+    bot.entry_drive_keys.pack(side="left", padx=(0, 16))
     bot.btn_test_boot = button(bot.global_settings_frame, "测试启动", bot.start_test_boot, width=82, height=30)
 
     bot.runtime_frame = card(bot.main_container, height=66, fg_color="#111112")

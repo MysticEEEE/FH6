@@ -20,6 +20,16 @@ from app_resources import (
 MATCH_THRESHOLD = 0.8
 
 
+def cv2_imread(path, flags=cv2.IMREAD_COLOR):
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, flags)
+    except Exception:
+        return cv2.imread(path, flags)
+
+
 class ImageMatcherMixin:
     # ==========================================
     def load_template(self, template_path):
@@ -29,7 +39,7 @@ class ImageMatcherMixin:
         if cache_key in self.template_cache:
             return self.template_cache[cache_key], actual_path
 
-        tpl = cv2.imread(actual_path, cv2.IMREAD_COLOR)
+        tpl = cv2_imread(actual_path, cv2.IMREAD_COLOR)
         if tpl is not None:
             self.template_cache[cache_key] = tpl
         return tpl, actual_path
@@ -40,7 +50,7 @@ class ImageMatcherMixin:
             self.template_gray_cache = {}
         if cache_key in self.template_gray_cache:
             return self.template_gray_cache[cache_key]
-        tpl = cv2.imread(actual_path, cv2.IMREAD_GRAYSCALE)
+        tpl = cv2_imread(actual_path, cv2.IMREAD_GRAYSCALE)
         if tpl is not None:
             self.template_gray_cache[cache_key] = tpl
         return tpl
@@ -109,7 +119,7 @@ class ImageMatcherMixin:
 
         for rel_path in meta_data.keys():
             img_path = os.path.join(images_dir, rel_path)
-            tpl = cv2.imread(img_path, cv2.IMREAD_COLOR)
+            tpl = cv2_imread(img_path, cv2.IMREAD_COLOR)
             if tpl is None:
                 continue
 
@@ -913,7 +923,7 @@ class ImageMatcherMixin:
             return self.template_transparent_cache[cache_key]
             
         # 注意这里的 cv2.IMREAD_UNCHANGED，它会保留透明通道 (BGRA)
-        tpl = cv2.imread(actual_path, cv2.IMREAD_UNCHANGED)
+        tpl = cv2_imread(actual_path, cv2.IMREAD_UNCHANGED)
         if tpl is not None:
             self.template_transparent_cache[cache_key] = tpl
         return tpl

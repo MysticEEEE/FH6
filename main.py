@@ -264,6 +264,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.yolo_car_select_model_lock = threading.Lock()
         self.ai_model_preload_started = False
         self.race_notice_shown = False
+        self.game_hwnd = None
+        self.game_process_pid = None
+        self.last_focus_check_at = 0.0
+        self.focus_recovering = False
 
         self.init_regions()
 
@@ -404,6 +408,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "auto_restart": False,
             "restart_cmd": "start steam://run/2483190",
             "race_timeout": 300,
+            "drive_keys": ["w", "up"],
             "ai_assist": False,
             "ai_prefer": False,
             "ai_only": False,
@@ -446,6 +451,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         except Exception:
             pass
 
+        if hasattr(self, "entry_drive_keys"):
+            self.config["drive_keys"] = self.parse_key_list(self.entry_drive_keys.get(), default=["w", "up"])
         self.config["chk_1"] = self.var_chk1.get()
         self.config["chk_2"] = self.var_chk2.get()
         self.config["chk_3"] = self.var_chk3.get()
@@ -550,6 +557,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def hw_key_down(self, key):
         if key not in DIK_CODES:
             return
+        if not self.ensure_game_focus("按键按下"):
+            return
         scan_code, extended = DIK_CODES[key]
         flags = 0x0008 | (0x0001 if extended else 0)
         extra = ctypes.c_ulong(0)
@@ -560,6 +569,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
     def hw_key_up(self, key):
         if key not in DIK_CODES:
+            return
+        if not self.ensure_game_focus("按键松开"):
             return
         scan_code, extended = DIK_CODES[key]
         flags = 0x000A | (0x0001 if extended else 0)
@@ -576,6 +587,37 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.hw_key_down(key)
         time.sleep(delay)
         self.hw_key_up(key)
+
+    def parse_key_list(self, raw_value, default=None):
+        default = default or []
+        if isinstance(raw_value, (list, tuple)):
+            raw_items = raw_value
+        else:
+            normalized = str(raw_value or "").lower()
+            for sep in ["，", "、", ";", "+", "|", "\n", "\t"]:
+                normalized = normalized.replace(sep, ",")
+            normalized = normalized.replace(" ", ",")
+            raw_items = normalized.split(",")
+
+        keys = []
+        for item in raw_items:
+            key = str(item).strip().lower()
+            if not key or key not in DIK_CODES or key in keys:
+                continue
+            keys.append(key)
+
+        return keys or list(default)
+
+    def get_drive_keys(self):
+        return self.parse_key_list(self.config.get("drive_keys", ["w", "up"]), default=["w", "up"])
+
+    def set_drive_keys_down(self):
+        for key in self.get_drive_keys():
+            self.hw_key_down(key)
+
+    def set_drive_keys_up(self):
+        for key in self.get_drive_keys():
+            self.hw_key_up(key)
     #副屏支持
     def hw_mouse_move(self, x, y):
         # 获取多显示器组成的整个“虚拟桌面”坐标和尺寸
@@ -602,6 +644,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def game_click(self, pos, double=False):
         self.check_pause()  # <--- 【新增】拦截鼠标点击
         if not self.is_running or not pos:
+            return
+        if not self.ensure_game_focus("鼠标点击"):
             return
         x, y = int(pos[0]), int(pos[1])
 
@@ -1352,6 +1396,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         if self.is_paused:
             self.log("⏸ 任务已暂停 (点击按钮恢复)")
             # 强制松开所有可能按住的按键，防止车自己开走或UI乱跳
+            self.set_drive_keys_up()
             for key in ["w", "e", "y", "enter", "esc", "up", "down", "left", "right", "space", "backspace"]:
                 self.hw_key_up(key)
             try:
@@ -1403,6 +1448,52 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log("已自动切换英文键盘/关闭中文输入法状态。")
         except Exception as e:
             self.log(f"自动防中文输入设置失败: {e}")
+
+    def is_game_foreground(self):
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if not hwnd:
+                return False
+
+            if getattr(self, "game_hwnd", None) and int(hwnd) == int(self.game_hwnd):
+                return True
+
+            window_pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+            target_pid = getattr(self, "game_process_pid", None)
+            return bool(target_pid and window_pid.value == target_pid)
+        except Exception:
+            return False
+
+    def ensure_game_focus(self, reason=""):
+        if not self.is_running:
+            return True
+
+        now = time.time()
+        if self.is_game_foreground():
+            self.last_focus_check_at = now
+            return True
+
+        if now - getattr(self, "last_focus_check_at", 0.0) < 1.0:
+            return False
+        self.last_focus_check_at = now
+
+        if getattr(self, "focus_recovering", False):
+            return False
+
+        self.focus_recovering = True
+        try:
+            suffix = f"（{reason}前）" if reason else ""
+            self.log(f"检测到游戏窗口失焦{suffix}，尝试按进程恢复焦点...")
+            ok = self.check_and_focus_game()
+            if ok:
+                self.log("游戏窗口焦点已恢复。")
+            else:
+                self.log("游戏窗口焦点恢复失败，本次输入已跳过。")
+            return ok
+        finally:
+            self.focus_recovering = False
+
     def check_and_focus_game(self):
         self.log("检查游戏进程 (forzahorizon6.exe)...")
         try:
@@ -1442,6 +1533,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
             if hwnds:
                 hwnd = hwnds[0]
+                self.game_process_pid = target_pid
+                self.game_hwnd = hwnd
                 if ctypes.windll.user32.IsIconic(hwnd):
                     ctypes.windll.user32.ShowWindow(hwnd, 9)
                 else:
@@ -2003,8 +2096,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
             self.game_click(pos)
             time.sleep(4.0)
-            self.hw_key_down("w")
-            self.hw_key_down("up")
+            self.set_drive_keys_down()
 
             # 初始化各类计时器
             race_start_time = time.time()  # 新增：记录跑图发车时间
@@ -2023,14 +2115,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 # ====== 【新增】跑图专用暂停处理逻辑 ======
                 if self.is_paused:
                     if driving_keys_held: # 刚进入暂停，松开油门
-                        self.hw_key_up("w")
-                        self.hw_key_up("up")
+                        self.set_drive_keys_up()
                         driving_keys_held = False
                     self.check_pause() # 阻塞在此处
                     # 从暂停中恢复，如果还没跑完，重新按下油门
                     if self.is_running:
-                        self.hw_key_down("w")
-                        self.hw_key_down("up")
+                        self.set_drive_keys_down()
                         driving_keys_held = True
 
                     # 避免恢复瞬间触发超时，重置计时器
@@ -2059,8 +2149,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     if self.handle_author_prompt(release_drive_keys=True):
                         if not self.is_running:
                             return False
-                        self.hw_key_down("w")
-                        self.hw_key_down("up")
+                        self.set_drive_keys_down()
                         driving_keys_held = True
                     last_like_chk = now
 
@@ -2075,8 +2164,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 time.sleep(0.3)
 
             # 无论正常结束还是超时，都必须先松开油门和方向
-            self.hw_key_up("w")
-            self.hw_key_up("up")
+            self.set_drive_keys_up()
 
             if not self.is_running:
                 return False
@@ -2152,8 +2240,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return False
 
         if release_drive_keys:
-            self.hw_key_up("w")
-            self.hw_key_up("up")
+            self.set_drive_keys_up()
 
         self.log("识别到作者评价界面，执行确认跳过。")
         for _ in range(2):
