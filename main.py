@@ -201,6 +201,7 @@ DIK_CODES = {
     "f6": (0x40, False),
     "f7": (0x41, False),
     "f8": (0x42, False),
+    "f9": (0x43, False),
     "f10": (0x44, False),
     "f11": (0x57, False),
     "f12": (0x58, False),
@@ -533,10 +534,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         try:
             if state == "running":
                 self.lbl_run_state.configure(text="运行中", fg_color="#238636", text_color="#FFFFFF")
+                self.btn_runtime_pause.configure(state="normal", text="暂停 F9", fg_color="#F1C40F", hover_color="#D4AC0D", text_color="#111827")
                 self.btn_runtime_stop.configure(state="normal")
                 self.btn_stop.configure(text="停止任务 (F8)", fg_color="#DA3633", hover_color="#B02A37")
             elif state == "paused":
                 self.lbl_run_state.configure(text="已暂停", fg_color="#9A6700", text_color="#FFFFFF")
+                self.btn_runtime_pause.configure(state="normal", text="继续 F9", fg_color="#2EA043", hover_color="#238636", text_color="#FFFFFF")
                 self.btn_runtime_stop.configure(state="normal")
             else:
                 self.lbl_run_state.configure(text="待机", fg_color="#222B36", text_color="#C9D1D9")
@@ -546,6 +549,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.lbl_runtime_task_time.configure(text="00:00:00")
                 self.lbl_runtime_total_time.configure(text="00:00:00")
                 self.lbl_runtime_totals.configure(text="跑图 00:00:00 | 买车 00:00:00 | 超抽 00:00:00")
+                self.btn_runtime_pause.configure(state="disabled", text="暂停 F9", fg_color="#F1C40F", hover_color="#D4AC0D", text_color="#111827")
                 self.btn_runtime_stop.configure(state="disabled")
                 self.btn_stop.configure(text="等待指令 (F8)", fg_color="#222B36", hover_color="#2F3B4A")
         except Exception:
@@ -1394,7 +1398,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.is_paused = not self.is_paused
 
         if self.is_paused:
-            self.log("⏸ 任务已暂停 (点击按钮恢复)")
+            self.log("⏸ 任务已暂停 (按 F9 或点击按钮恢复)")
             # 强制松开所有可能按住的按键，防止车自己开走或UI乱跳
             self.set_drive_keys_up()
             for key in ["w", "e", "y", "enter", "esc", "up", "down", "left", "right", "space", "backspace"]:
@@ -1419,6 +1423,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             def on_press(k):
                 if k == keyboard.Key.f8:
                     self.stop_all()
+                elif k == keyboard.Key.f9:  # <--- 【新增】F9 快捷键
+                    self.toggle_pause()
                 elif k == keyboard.Key.f3:  # <--- 【新增】F3 测试找图
                     self.start_test_find_image()
 

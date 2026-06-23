@@ -326,6 +326,19 @@ def setup_ui(bot):
     bot.lbl_runtime_total_time = make_runtime_label("总运行时间", "00:00:00")
     bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 超抽 00:00:00")
 
+    bot.btn_runtime_pause = button(
+        bot.runtime_frame,
+        "暂停 F9",
+        bot.toggle_pause,
+        color=colors["yellow"],
+        hover="#E6C000",
+        width=82,
+        height=34,
+        text_color="#111111",
+    )
+    bot.btn_runtime_pause.configure(state="disabled")
+    bot.btn_runtime_pause.pack(side="right", padx=(0, 8), pady=14)
+
     bot.btn_runtime_stop = button(
         bot.runtime_frame,
         "停止 F8",
