@@ -729,6 +729,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         curr_time = time.strftime("%H:%M:%S")
         full_msg = f"[{curr_time}] {message}"
 
+        # 同步写一份到 debug/gui_log.txt（复用 run_with_file_log 的写法），方便外部读取调试
+        try:
+            log_path = os.path.join(get_app_dir(), "debug", "gui_log.txt")
+            os.makedirs(os.path.dirname(log_path), exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(full_msg + "\n")
+        except Exception:
+            pass
+
         def write_ui():
             try:
                 # 写入下方大界面的日志
