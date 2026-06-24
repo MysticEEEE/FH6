@@ -2804,11 +2804,24 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return None
 
     def gift_panel_conf(self):
-        """左侧面板与目标车款数值块的匹配置信度。"""
+        """目标车款匹配置信度 = 左侧面板各数值字段（马力/车重/排气量）匹配的【最小值】。
+        取最弱字段最稳健：不同车至少有一个数值对不上。整块匹配会被通用标签(马力/扭矩...)主导，
+        故改逐字段匹配数值小图。区域比例由实机整屏 2563×1443 标定。"""
+        fields = [
+            ("giftbox/stat_mali.png",  (0.1307, 0.4435, 0.0870, 0.0430)),
+            ("giftbox/stat_chez.png",  (0.1307, 0.5322, 0.0870, 0.0430)),
+            ("giftbox/stat_paiqi.png", (0.1307, 0.6209, 0.0870, 0.0430)),
+        ]
         try:
-            g = cv2.cvtColor(self.capture_region(self.left_panel_region()), cv2.COLOR_BGR2GRAY)
-            tpl = self.load_template_gray("giftbox/target_stats.png")
-            return self.match_template_score(g, tpl)
+            x, y, w, h = self.regions["全界面"]
+            confs = []
+            for tpl_path, (rx, ry, rw, rh) in fields:
+                m = 16  # 搜索边距
+                reg = (x + int(w * rx) - m, y + int(h * ry) - m,
+                       int(w * rw) + 2 * m, int(h * rh) + 2 * m)
+                g = cv2.cvtColor(self.capture_region(reg), cv2.COLOR_BGR2GRAY)
+                confs.append(self.match_template_score(g, self.load_template_gray(tpl_path)))
+            return min(confs) if confs else -1.0
         except Exception:
             return -1.0
 
@@ -2821,8 +2834,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             prev_running = self.is_running
             self.is_running = True
             try:
+                # F4 是全局热键，GUI 可能在前面遮挡游戏（整屏截图会抓进来）。
+                # 先把 GUI 压到最底再聚焦游戏，确保截到的是干净的游戏画面。
+                self.ui_call(self.lower)
+                time.sleep(0.3)
                 self.check_and_focus_game()
-                time.sleep(0.2)
+                time.sleep(0.3)
                 region = self.find_selected_card_region()
                 hl = "高亮" if region is not None else "回退固定框"
                 if region is None:
@@ -2845,6 +2862,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.log(f"[F4] 识别异常: {e}")
             finally:
                 self.is_running = prev_running
+                self.ui_call(self.lift)   # 恢复 GUI 到前面，方便看日志
         threading.Thread(target=work, daemon=True).start()
 
     def capture_full_debug(self):
@@ -3053,11 +3071,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def selected_car_is_target(self):
         """左侧面板数值块是否匹配目标车款（马力/扭矩/车重/前轴/排气 指纹）。
         用于「动作前正向门槛」：只有是目标车才送/才选。
-        用 match_template_score（scale 1.0，面板本就是原生尺度）取置信度，阈值 0.92——
-        实测目标 B600≈0.996、在用车 S2 834（同款重改，数值不同）≈0.83，能干净区分。
+        逐字段数值匹配取最小值，阈值 0.91——实测目标≈1.0、菲亚特131≈0.85、S2 834≈0.86，干净区分。
         不匹配或异常返回 False（保守：不是目标车就不动作）。不依赖 is_running。"""
         try:
-            return self.gift_panel_conf() >= 0.92
+            return self.gift_panel_conf() >= 0.91
         except Exception as e:
             self.log(f"[Gift] 目标车款检测异常: {e}")
             return False
