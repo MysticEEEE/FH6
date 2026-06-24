@@ -2772,6 +2772,29 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.log("[Gift] 已进入礼物箱并应用「重复项」筛选。")
         return True
 
+    def selected_card_region(self):
+        """选中卡（左上高亮卡）区域，按全界面比例换算。
+        比例由 Task4-Step1 对 screenshots/05_筛选重复后.png 与
+        screenshots/12_带全新标记的车辆卡片.png（均 2560×1440）实测：
+        像素框 L=470, T=165, R=940, B=660（含传奇/全新 bar）。
+        精确裁框留待用户对实机画面校准。
+        """
+        x, y, w, h = self.regions["全界面"]
+        # 实测比例（来自截图 05 / 12，2560×1440 坐标换算）
+        rx, ry, rw, rh = 0.1836, 0.1146, 0.1836, 0.3438
+        return (x + int(w * rx), y + int(h * ry), int(w * rw), int(h * rh))
+
+    def selected_card_has_new_tag(self) -> bool:
+        """选中卡是否带「全新」标记。识别不确定时返回 True（安全默认：不送）。"""
+        try:
+            region = self.selected_card_region()
+            pos = self.find_image_gray("newcartag.png", region=region,
+                                       threshold=0.68, fast_mode=True)
+            return pos is not None
+        except Exception as e:
+            self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
+            return True
+
 if __name__ == "__main__":
     app = FH_UltimateBot()
     app.mainloop()
