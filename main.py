@@ -2829,24 +2829,32 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     self.log(f"[GiftTest] AI整屏基线: new={c['new']} b600={c['b600']} car={c['car']} "
                              f"最大new置信={mx:.2f}")
 
-                for i in range(15):
+                # 先归位到第一辆车，再逐张向右遍历（动态高亮跟踪选中卡）
+                self.go_to_list_start()
+                time.sleep(0.5)
+
+                N = 35
+                self.update_running_ui("送车测试", 0, N)
+                for i in range(N):
                     if not self.is_running:
                         break
                     self.check_pause()
-                    region = self.selected_card_region()
+                    # 动态找【当前选中卡】区域（高亮边框）；失败回退固定框
+                    region = self.find_selected_card_region()
+                    hl = "高亮" if region is not None else "回退固定框"
+                    if region is None:
+                        region = self.selected_card_region()
                     crop = self.capture_region(region)
                     self.write_debug_image(
                         os.path.join(debug_dir, f"card_{i + 1:02d}.png"), crop)
-                    # 1) 模板检测（现行安全机制）
-                    tpl_tag = self.selected_card_has_new_tag()
-                    # 2) AI 检测（选中卡区域）
-                    ai = ai_counts_on(region, model)
+                    tpl_tag = self.selected_card_has_new_tag()   # 模板检测
+                    ai = ai_counts_on(region, model)             # AI 检测
                     ai_str = "AI=跳过"
                     if ai is not None:
                         c, mx = ai
                         ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
-                    self.update_running_ui("送车测试", i + 1, 15)
-                    self.log(f"[GiftTest] 卡#{i + 1} 模板全新={tpl_tag}  {ai_str} "
+                    self.update_running_ui("送车测试", i + 1, N)
+                    self.log(f"[GiftTest] 卡#{i + 1}({hl}) 模板全新={tpl_tag}  {ai_str} "
                              f"(已存 card_{i + 1:02d}.png)")
                     self.hw_press("right", delay=0.1)
                     time.sleep(0.4)
@@ -2903,31 +2911,78 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.log("[Gift] 已进入礼物箱并应用「重复项」筛选。")
         return True
 
+    def find_selected_card_region(self):
+        """动态检测黄绿高亮边框，返回【当前选中卡】区域 (x,y,w,h)；找不到返回 None。
+        高亮边框颜色实测 HSV≈(34,242,251)。这样区域能跟着选中卡走，
+        不论它在网格哪个位置（解决固定框跟不上 + 交错卡逐张判断）。"""
+        try:
+            region = self.regions["全界面"]
+            bgr = self.capture_region(region)
+            hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+            mask = cv2.inRange(hsv, np.array([31, 180, 210]), np.array([38, 255, 255]))
+            cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # 按当前分辨率缩放卡片尺寸范围（2560 基准下高亮框 ~454x347）
+            scale = region[2] / 2560.0
+            wmin, wmax = 330 * scale, 540 * scale
+            hmin, hmax = 260 * scale, 410 * scale
+            best, best_area = None, 0
+            for c in cnts:
+                bx, by, bw, bh = cv2.boundingRect(c)
+                if wmin <= bw <= wmax and hmin <= bh <= hmax and bw * bh > best_area:
+                    best, best_area = (bx, by, bw, bh), bw * bh
+            if best is None:
+                return None
+            bx, by, bw, bh = best
+            return (region[0] + bx, region[1] + by, bw, bh)
+        except Exception as e:
+            self.log(f"[Gift] 选中卡高亮检测异常: {e}")
+            return None
+
     def selected_card_region(self):
-        """选中卡（左上高亮卡）区域，按全界面比例换算。
-        比例由 Task4-Step1 对 screenshots/05_筛选重复后.png 与
-        screenshots/12_带全新标记的车辆卡片.png（均 2560×1440）实测：
-        像素框 L=470, T=165, R=940, B=660（含传奇/全新 bar）。
-        精确裁框留待用户对实机画面校准。
-        """
+        """固定回退区域：高亮检测失败时用。比例来自实机整屏（2563×1443）选中卡 x557-985 y289-619。"""
         x, y, w, h = self.regions["全界面"]
-        # 实测比例（来自实机整屏 debug/gift_test/00_fullscreen.png 2563×1443）：
-        # 选中卡（左上高亮卡）像素框 x595-1135, y300-638；右下角即「全新」标记位置。
-        rx, ry, rw, rh = 0.2321, 0.2079, 0.2107, 0.2342
+        rx, ry, rw, rh = 0.2173, 0.2003, 0.1670, 0.2287
         return (x + int(w * rx), y + int(h * ry), int(w * rw), int(h * rh))
 
     def selected_card_has_new_tag(self) -> bool:
-        """选中卡是否带「全新」标记。识别不确定时返回 True（安全默认：不送）。"""
+        """当前选中卡是否带「全新」标记。优先用动态高亮区域，失败回退固定框。
+        识别不确定时返回 True（安全默认：不送）。"""
         if not self.is_running:
             return True
         try:
-            region = self.selected_card_region()
+            region = self.find_selected_card_region() or self.selected_card_region()
             pos = self.find_image_gray("newcartag.png", region=region,
                                        threshold=0.68, fast_mode=True)
             return pos is not None
         except Exception as e:
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
             return True
+
+    def go_to_list_start(self, max_presses=80, stable_needed=3):
+        """连续按 pageup 直到网格画面连续若干帧无明显变化（到达第一辆车）。
+        用帧差均值判断是否到达边界，不依赖模板。"""
+        region = self.regions["全界面"]
+        prev = None
+        stable = 0
+        for _ in range(max_presses):
+            if not self.is_running:
+                return False
+            self.check_pause()
+            self.hw_press("pageup", delay=0.1)
+            time.sleep(0.35)
+            cur = self.capture_region(region)
+            if prev is not None:
+                diff = float(np.mean(cv2.absdiff(cur, prev)))
+                if diff < 1.5:
+                    stable += 1
+                    if stable >= stable_needed:
+                        self.log("[Gift] 已到列表起点（画面连续稳定）。")
+                        return True
+                else:
+                    stable = 0
+            prev = cur
+        self.log("[Gift] go_to_list_start 翻到上限，按到顶处理。")
+        return True
 
     def gift_current_car(self):
         """对当前选中卡执行赠送序列。返回 'sent' / 'cannot' / 'fail'。"""
