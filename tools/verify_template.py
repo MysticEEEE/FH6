@@ -22,7 +22,7 @@ def main():
     sg = cv2.cvtColor(scene, cv2.COLOR_BGR2GRAY)
 
     best = (-1.0, None, None)
-    for scale in [1.0, 0.98, 1.02, 0.95, 1.05, 0.92, 1.08, 0.9, 1.1]:
+    for scale in [round(0.5 + 0.05 * i, 2) for i in range(25)]:  # 0.50 .. 1.70
         h, w = int(tg.shape[0] * scale), int(tg.shape[1] * scale)
         if h < 8 or w < 8 or h > sg.shape[0] or w > sg.shape[1]:
             continue
