@@ -2808,15 +2808,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         取最弱字段最稳健：不同车至少有一个数值对不上。整块匹配会被通用标签(马力/扭矩...)主导，
         故改逐字段匹配数值小图。区域比例由实机整屏 2563×1443 标定。"""
         fields = [
-            ("giftbox/stat_mali.png",  (0.1307, 0.4435, 0.0870, 0.0430)),
-            ("giftbox/stat_chez.png",  (0.1307, 0.5322, 0.0870, 0.0430)),
-            ("giftbox/stat_paiqi.png", (0.1307, 0.6209, 0.0870, 0.0430)),
+            ("giftbox/stat_mali.png",  (0.1319, 0.4532, 0.0866, 0.0402)),
+            ("giftbox/stat_chez.png",  (0.1319, 0.5419, 0.0866, 0.0402)),
+            ("giftbox/stat_paiqi.png", (0.1319, 0.6306, 0.0866, 0.0402)),
         ]
         try:
             x, y, w, h = self.regions["全界面"]
             confs = []
             for tpl_path, (rx, ry, rw, rh) in fields:
-                m = 16  # 搜索边距
+                m = 30  # 搜索边距（容忍面板位置在不同截图间的轻微抖动）
                 reg = (x + int(w * rx) - m, y + int(h * ry) - m,
                        int(w * rw) + 2 * m, int(h * rh) + 2 * m)
                 g = cv2.cvtColor(self.capture_region(reg), cv2.COLOR_BGR2GRAY)
@@ -3071,10 +3071,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def selected_car_is_target(self):
         """左侧面板数值块是否匹配目标车款（马力/扭矩/车重/前轴/排气 指纹）。
         用于「动作前正向门槛」：只有是目标车才送/才选。
-        逐字段数值匹配取最小值，阈值 0.91——实测目标≈1.0、菲亚特131≈0.85、S2 834≈0.86，干净区分。
+        逐字段数值匹配取最小值，阈值 0.85——实测目标≈1.0、菲亚特131≈0.72、S2 834≈0.62，干净区分。
         不匹配或异常返回 False（保守：不是目标车就不动作）。不依赖 is_running。"""
         try:
-            return self.gift_panel_conf() >= 0.91
+            return self.gift_panel_conf() >= 0.85
         except Exception as e:
             self.log(f"[Gift] 目标车款检测异常: {e}")
             return False
