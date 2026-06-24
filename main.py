@@ -57,6 +57,7 @@ import win32gui
 import threading
 
 from image_matcher import ImageMatcherMixin
+from gift_logic import should_stop_gifting, gift_default_config
 
 from app_resources import (
     APP_DIR,
@@ -2828,6 +2829,66 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.hw_press("enter")          # 确定 → 回到网格
         time.sleep(1.0)
         return "sent"
+
+    def logic_gift_duplicate_cars(self):
+        """自动送车主流程：送掉所有无全新标记的重复车，到「无法送出」为止。"""
+        if not self.navigate_to_giftbox():
+            return False
+
+        try:
+            max_count = int(self.config.get("gift_max_count", 200))
+        except Exception:
+            max_count = 200
+
+        gifted = 0
+        consecutive_skips = 0
+        SKIP_LIMIT = 60   # 连续这么多张都是全新/失败则认为到边界，停止
+        self.update_running_ui("自动送车", gifted, max_count or 0)
+
+        while self.is_running:
+            self.check_pause()
+
+            # 估算剩余卡（网格锚点是否还在；只剩个位数时锚点形态变化作为辅助）
+            grid_present = self.find_image_gray(
+                "giftbox/grid.png", region=self.regions["全界面"],
+                threshold=0.7, fast_mode=True) is not None
+            remaining = 99 if grid_present else 1
+
+            stop, reason = should_stop_gifting(
+                cannot_gift_detected=False, remaining_cards=remaining,
+                gifted_count=gifted, max_count=max_count)
+            if stop:
+                self.log(f"[Gift] 停止：{reason}")
+                break
+
+            if self.selected_card_has_new_tag():
+                self.hw_press("right", delay=0.1)   # 全新，跳到下一张
+                time.sleep(0.3)
+                consecutive_skips += 1
+                if consecutive_skips >= SKIP_LIMIT:
+                    self.log("[Gift] 连续大量跳过，判定无更多可送车，停止。")
+                    break
+                continue
+
+            result = self.gift_current_car()
+            if result == "sent":
+                gifted += 1
+                consecutive_skips = 0
+                self.update_running_ui("自动送车", gifted, max_count or 0)
+                self.log(f"[Gift] 已送出 {gifted} 辆。")
+            elif result == "cannot":
+                self.log("[Gift] 已送完（无法送出）。")
+                break
+            else:  # fail
+                consecutive_skips += 1
+                self.hw_press("right", delay=0.1)
+                time.sleep(0.3)
+                if consecutive_skips >= SKIP_LIMIT:
+                    self.log("[Gift] 连续失败过多，停止以防异常。")
+                    break
+
+        self.log(f"[Gift] 送车流程结束，共送出 {gifted} 辆。")
+        return True
 
 if __name__ == "__main__":
     app = FH_UltimateBot()
