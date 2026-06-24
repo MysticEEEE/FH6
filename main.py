@@ -2807,6 +2807,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         """F4：单张识别当前选中卡（模板全新 + 目标车款 + AI），输出日志并存图。只读不动作。
         送车/专精选车界面通用——导航到任一界面按 F4 即可看当前选中卡的识别情况。"""
         def work():
+            # 关键：识别函数（selected_card_has_new_tag / find_image_gray）会在
+            # not is_running 时直接短路返回，所以 F4 期间临时置 True，结束恢复。
+            prev_running = self.is_running
+            self.is_running = True
             try:
                 self.check_and_focus_game()
                 time.sleep(0.2)
@@ -2830,6 +2834,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                          f"{ai_str} -> 已存 debug/gift_test/{fname}")
             except Exception as e:
                 self.log(f"[F4] 识别异常: {e}")
+            finally:
+                self.is_running = prev_running
         threading.Thread(target=work, daemon=True).start()
 
     def capture_full_debug(self):
@@ -3037,13 +3043,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
     def selected_car_is_target(self):
         """左侧面板数值块是否匹配目标车款（马力/扭矩/车重/前轴/排气 指纹）。
-        用于「动作前正向门槛」：只有是目标车才送/才选。在用车 S2 834 数值不同会不匹配。
-        匹配不上或异常时返回 False（保守：不是目标车就不动作）。"""
+        用于「动作前正向门槛」：只有是目标车才送/才选。
+        用 match_template_score（scale 1.0，面板本就是原生尺度）取置信度，阈值 0.92——
+        实测目标 B600≈0.996、在用车 S2 834（同款重改，数值不同）≈0.83，能干净区分。
+        不匹配或异常返回 False（保守：不是目标车就不动作）。不依赖 is_running。"""
         try:
-            region = self.left_panel_region()
-            pos = self.find_image_gray("giftbox/target_stats.png", region=region,
-                                       threshold=0.75, fast_mode=True)
-            return pos is not None
+            return self.gift_panel_conf() >= 0.92
         except Exception as e:
             self.log(f"[Gift] 目标车款检测异常: {e}")
             return False
