@@ -2911,8 +2911,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         精确裁框留待用户对实机画面校准。
         """
         x, y, w, h = self.regions["全界面"]
-        # 实测比例（来自截图 05 / 12，2560×1440 坐标换算）
-        rx, ry, rw, rh = 0.1836, 0.1146, 0.1836, 0.3438
+        # 实测比例（来自实机整屏 debug/gift_test/00_fullscreen.png 2563×1443）：
+        # 选中卡（左上高亮卡）像素框 x595-1135, y300-638；右下角即「全新」标记位置。
+        rx, ry, rw, rh = 0.2321, 0.2079, 0.2107, 0.2342
         return (x + int(w * rx), y + int(h * ry), int(w * rw), int(h * rh))
 
     def selected_card_has_new_tag(self) -> bool:
