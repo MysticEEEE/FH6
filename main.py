@@ -2753,6 +2753,57 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.current_thread = threading.Thread(target=runner, daemon=True)
         self.current_thread.start()
 
+    def start_gift_test(self):
+        """送车干跑测试（F3 思路）：导航 + 重复筛选 + 逐卡检测全新标记并存检测区域图，
+        全程绝不送车。用于实机校准导航/筛选/全新识别与 selected_card_region 区域。"""
+        if self.is_running:
+            self.log("已有任务正在运行，无法启动送车测试。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self.save_config()
+        self.reset_run_stats()
+        self.update_running_state("running")
+        self.update_running_ui("送车测试", 0, 15)
+        self.ui_call(self.lbl_runtime_loop.configure, text="测试模式")
+        self.update_timer()
+        self.log("====== 开始送车干跑测试（只检测/存图，绝不送车）======")
+
+        def runner():
+            try:
+                if not self.check_and_focus_game():
+                    self.log("未能聚焦游戏窗口，测试结束。")
+                    return
+                if not self.navigate_to_giftbox():
+                    self.log("[GiftTest] 导航或筛选失败，测试结束。")
+                    return
+                debug_dir = os.path.join(get_app_dir(), "debug", "gift_test")
+                full = self.capture_region(self.regions["全界面"])
+                self.write_debug_image(os.path.join(debug_dir, "00_fullscreen.png"), full)
+                self.log(f"[GiftTest] 已存整屏 -> {debug_dir}\\00_fullscreen.png")
+                for i in range(15):
+                    if not self.is_running:
+                        break
+                    self.check_pause()
+                    region = self.selected_card_region()
+                    crop = self.capture_region(region)
+                    self.write_debug_image(
+                        os.path.join(debug_dir, f"card_{i + 1:02d}.png"), crop)
+                    has_tag = self.selected_card_has_new_tag()
+                    self.update_running_ui("送车测试", i + 1, 15)
+                    self.log(f"[GiftTest] 卡#{i + 1} 全新标记={has_tag} "
+                             f"(已存 card_{i + 1:02d}.png)")
+                    self.hw_press("right", delay=0.1)
+                    time.sleep(0.4)
+                self.log(f"[GiftTest] 干跑完成。检测图在 {debug_dir}")
+            except Exception as e:
+                self.log(f"送车测试异常: {e}")
+            finally:
+                self.stop_all()
+
+        self.current_thread = threading.Thread(target=runner, daemon=True)
+        self.current_thread.start()
+
     def navigate_to_giftbox(self):
         """进入主菜单 → 车辆页 → 礼物箱 → F筛选 → 勾「重复项」。成功返回 True。"""
         self.log("[Gift] 准备进入主菜单...")
