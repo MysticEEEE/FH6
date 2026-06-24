@@ -1429,6 +1429,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     self.toggle_pause()
                 elif k == keyboard.Key.f3:  # <--- 【新增】F3 测试找图
                     self.start_test_find_image()
+                elif k == keyboard.Key.f4:  # <--- 【新增】F4 单张识别当前选中卡
+                    self.recognize_current_card()
+                elif k == keyboard.Key.f6:  # <--- 【新增】F6 存当前完整截图
+                    self.capture_full_debug()
 
             with keyboard.Listener(on_press=on_press) as listener:
                 listener.join()
@@ -2753,6 +2757,97 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.current_thread = threading.Thread(target=runner, daemon=True)
         self.current_thread.start()
 
+    def gift_load_yolo(self):
+        """加载 YOLO 模型（无视 ai_assist 开关，调试/识别用），失败返回 None。"""
+        m = self.get_yolo_car_select_model()
+        if m is not None:
+            return m
+        try:
+            path = self.resolve_ai_model_path()
+            if not path:
+                return None
+            from ultralytics import YOLO
+            return YOLO(path)
+        except Exception as e:
+            self.log(f"[识别] YOLO 加载失败: {e}")
+            return None
+
+    def gift_ai_counts(self, region, model):
+        """在 region 上跑 YOLO，返回 (counts{new,b600,car}, 最大new置信度) 或 None。"""
+        if model is None:
+            return None
+        try:
+            bgr = self.capture_region(region)
+            res = model.predict(source=bgr, imgsz=int(self.config.get("ai_imgsz", 960)),
+                                conf=0.10, device=self.resolve_ai_device(), verbose=False)[0]
+            counts = {"new": 0, "b600": 0, "car": 0}
+            mx = 0.0
+            if res.boxes is not None:
+                for item in res.boxes:
+                    b = self.yolo_box_to_dict(item, conf_threshold=0.0)
+                    if b and b["name"] in counts:
+                        counts[b["name"]] += 1
+                        if b["name"] == "new":
+                            mx = max(mx, b["conf"])
+            return counts, mx
+        except Exception as e:
+            self.log(f"[识别] AI 推理异常: {e}")
+            return None
+
+    def gift_panel_conf(self):
+        """左侧面板与目标车款数值块的匹配置信度。"""
+        try:
+            g = cv2.cvtColor(self.capture_region(self.left_panel_region()), cv2.COLOR_BGR2GRAY)
+            tpl = self.load_template_gray("giftbox/target_stats.png")
+            return self.match_template_score(g, tpl)
+        except Exception:
+            return -1.0
+
+    def recognize_current_card(self):
+        """F4：单张识别当前选中卡（模板全新 + 目标车款 + AI），输出日志并存图。只读不动作。
+        送车/专精选车界面通用——导航到任一界面按 F4 即可看当前选中卡的识别情况。"""
+        def work():
+            try:
+                self.check_and_focus_game()
+                time.sleep(0.2)
+                region = self.find_selected_card_region()
+                hl = "高亮" if region is not None else "回退固定框"
+                if region is None:
+                    region = self.selected_card_region()
+                debug_dir = os.path.join(get_app_dir(), "debug", "gift_test")
+                stamp = time.strftime("%H%M%S")
+                fname = f"f4_{stamp}.png"
+                self.write_debug_image(os.path.join(debug_dir, fname), self.capture_region(region))
+                tag = self.selected_card_has_new_tag()
+                is_target = self.selected_car_is_target()
+                pconf = self.gift_panel_conf()
+                ai = self.gift_ai_counts(region, self.gift_load_yolo())
+                ai_str = "AI=跳过"
+                if ai is not None:
+                    c, mx = ai
+                    ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
+                self.log(f"[F4] ({hl}) 全新={tag} 目标车={is_target}(panel={pconf:.2f}) "
+                         f"{ai_str} -> 已存 debug/gift_test/{fname}")
+            except Exception as e:
+                self.log(f"[F4] 识别异常: {e}")
+        threading.Thread(target=work, daemon=True).start()
+
+    def capture_full_debug(self):
+        """F6：存当前游戏完整截图到 debug/screenshots。"""
+        def work():
+            try:
+                self.check_and_focus_game()
+                time.sleep(0.2)
+                img = self.capture_region(self.regions["全界面"])
+                debug_dir = os.path.join(get_app_dir(), "debug", "screenshots")
+                stamp = time.strftime("%Y%m%d_%H%M%S")
+                path = os.path.join(debug_dir, f"full_{stamp}.png")
+                self.write_debug_image(path, img)
+                self.log(f"[F6] 已存完整截图 -> {path}")
+            except Exception as e:
+                self.log(f"[F6] 截图异常: {e}")
+        threading.Thread(target=work, daemon=True).start()
+
     def start_gift_test(self):
         """送车干跑测试（F3 思路）：导航 + 重复筛选 + 逐卡检测全新标记并存检测区域图，
         全程绝不送车。用于实机校准导航/筛选/全新识别与 selected_card_region 区域。"""
@@ -2769,54 +2864,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.update_timer()
         self.log("====== 开始送车干跑测试（只检测/存图，绝不送车）======")
 
+        # 复用类方法（F4 单张识别同款），避免重复
         def load_test_yolo():
-            """测试用：无视 ai_assist 开关强制加载 YOLO 模型，失败返回 None。"""
-            m = self.get_yolo_car_select_model()
-            if m is not None:
-                return m
-            try:
-                path = self.resolve_ai_model_path()
-                if not path:
-                    self.log("[GiftTest] 未找到 YOLO 模型文件，跳过 AI 测试。")
-                    return None
-                from ultralytics import YOLO
-                self.log(f"[GiftTest] 强制加载 YOLO 模型: {path}")
-                return YOLO(path)
-            except Exception as e:
-                self.log(f"[GiftTest] YOLO 加载失败，跳过 AI 测试: {e}")
-                return None
+            return self.gift_load_yolo()
 
         def ai_counts_on(region, model):
-            """在 region 上跑 YOLO，返回 (counts{new,b600,car}, 最大new置信度) 或 None。"""
-            if model is None:
-                return None
-            try:
-                bgr = self.capture_region(region)
-                res = model.predict(source=bgr, imgsz=int(self.config.get("ai_imgsz", 960)),
-                                    conf=0.10, device=self.resolve_ai_device(), verbose=False)[0]
-                counts = {"new": 0, "b600": 0, "car": 0}
-                max_new = 0.0
-                if res.boxes is not None:
-                    for item in res.boxes:
-                        b = self.yolo_box_to_dict(item, conf_threshold=0.0)
-                        if b and b["name"] in counts:
-                            counts[b["name"]] += 1
-                            if b["name"] == "new":
-                                max_new = max(max_new, b["conf"])
-                return counts, max_new
-            except Exception as e:
-                self.log(f"[GiftTest] AI 推理异常: {e}")
-                return None
+            return self.gift_ai_counts(region, model)
 
         def panel_conf():
-            """左侧面板与目标车款数值块的匹配置信度（用于调阈值）。"""
-            try:
-                g = cv2.cvtColor(self.capture_region(self.left_panel_region()),
-                                 cv2.COLOR_BGR2GRAY)
-                tpl = self.load_template_gray("giftbox/target_stats.png")
-                return self.match_template_score(g, tpl)
-            except Exception:
-                return -1.0
+            return self.gift_panel_conf()
 
         def runner():
             try:
