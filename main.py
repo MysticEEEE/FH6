@@ -2805,47 +2805,39 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.current_thread.start()
 
     def navigate_to_giftbox(self):
-        """进入主菜单 → 车辆页 → 礼物箱 → F筛选 → 勾「重复项」。成功返回 True。"""
+        """复用现有导航：enter_menu → pagedown → 用 BNandUC 锚定车辆页 → 点礼物箱 → F 筛选「重复项」。
+        成功返回 True。只新增「礼物箱入口」一个模板，其余全部复用既有逻辑。"""
         self.log("[Gift] 准备进入主菜单...")
         if not self.enter_menu():
             self.log("[Gift] 进入主菜单失败。")
             return False
 
-        # 切到「车辆」标签页并定位礼物箱入口（复用跑图导航的翻页/锚点模式）
-        pos_entry = None
-        for _ in range(6):
-            if not self.is_running:
-                return False
-            self.check_pause()
-            pos_entry = self.wait_for_image_gray(
-                "giftbox/entry.png", region=self.regions["全界面"],
-                threshold=0.7, timeout=1.5, interval=0.2, fast_mode=True)
-            if pos_entry:
-                break
-            self.hw_press("pagedown", delay=0.15)
-            time.sleep(0.4)
-        if not pos_entry:
+        # 复用超抽同款路径：pagedown 进「车辆与收藏」，用 BNandUC.png 锚定车辆页（只确认到位，不点它）
+        self.log("[Gift] 进入车辆页...")
+        self.hw_press("pagedown", delay=0.15)
+        time.sleep(1.0)
+        if not self.wait_for_buy_and_used_car(timeout=15):
+            self.log("[Gift] 未锚定到车辆页（未识别到【购买新车与二手车】）。")
+            return False
+
+        # 定位并点击「礼物箱」（车辆页中间列）
+        self.check_pause()
+        pos_giftbox = self.wait_for_image_gray(
+            "giftbox/giftbox_entry.png", region=self.regions["全界面"],
+            threshold=0.7, timeout=8, interval=0.25, fast_mode=False)
+        if not pos_giftbox:
             self.log("[Gift] 未找到礼物箱入口。")
             return False
-        self.game_click(pos_entry)
+        self.game_click(pos_giftbox)
         time.sleep(1.5)
 
-        # 确认进入礼物选择网格
-        if not self.wait_for_image_gray("giftbox/grid.png", region=self.regions["全界面"],
-                                        threshold=0.7, timeout=8, interval=0.25, fast_mode=True):
-            self.log("[Gift] 未进入礼物选择网格。")
-            return False
-
-        # 打开筛选并勾选「重复项」（F → 下×2 → Enter → Esc）
+        # 打开筛选并勾选「重复项」（礼物界面 F=筛选；F → 下×2 → Enter → Esc）
+        self.check_pause()
         self.hw_press("f")
         time.sleep(0.8)
-        if not self.wait_for_image_gray("giftbox/filter_title.png", region=self.regions["全界面"],
-                                        threshold=0.7, timeout=5, interval=0.25, fast_mode=True):
-            self.log("[Gift] 未打开筛选菜单。")
-            return False
         self.hw_press("down", delay=0.12)
         self.hw_press("down", delay=0.12)
-        self.hw_press("enter", delay=0.12)   # 勾选「重复项」
+        self.hw_press("enter", delay=0.12)   # 勾选「重复项」（筛选菜单第 3 项）
         time.sleep(0.5)
         self.hw_press("esc")
         time.sleep(1.2)
