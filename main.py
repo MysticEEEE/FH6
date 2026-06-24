@@ -2960,20 +2960,29 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
             return True
 
-    def go_to_list_start(self, presses=90):
-        """按固定次数 pageup 翻到列表第一辆车（到顶后继续按为无操作，安全）。
-        不用帧差检测：重复车列表每页画面几乎一样，帧差会在没到顶时误判稳定提前停。
-        用户实测约 60-61 页到第一辆，这里留足余量并兼顾按键可能被吞。"""
-        self.log(f"[Gift] 翻到列表起点（pageup ×{presses}）...")
-        for i in range(presses):
+    def go_to_list_start(self, max_presses=120):
+        """快速连按 pageup 翻到列表第一辆，用「增量间隔帧是否冻结」判断到顶。
+        要点：不比相邻帧（按键偶尔被吞会让相邻两帧相同 → 误判），而是把当前帧
+        与逐渐拉大跨度的过去帧（3/6/10/16 帧前）对比——还在滚动时大跨度帧必然不同，
+        只有真正到顶冻结才会全部一致。比固定次数快、比相邻帧检测准。"""
+        region = self.regions["全界面"]
+        buf = []  # 最近若干帧（全分辨率，滚动窗口）
+        for i in range(max_presses):
             if not self.is_running:
                 return False
             self.check_pause()
-            self.hw_press("pageup", delay=0.08)
-            time.sleep(0.16)
-            if (i + 1) % 30 == 0:
-                self.log(f"[Gift] go_to_list_start 进度 {i + 1}/{presses}")
-        self.log("[Gift] 已翻到列表起点。")
+            self.hw_press("pageup", delay=0.04)   # 加快频率
+            time.sleep(0.06)
+            buf.append(self.capture_region(region))
+            if len(buf) > 16:
+                buf.pop(0)
+            if len(buf) == 16:
+                cur = buf[-1]
+                refs = [buf[-3], buf[-6], buf[-10], buf[-16]]  # 增量间隔
+                if all(float(np.mean(cv2.absdiff(cur, r))) < 1.0 for r in refs):
+                    self.log(f"[Gift] 已到列表起点（{i + 1} 次 pageup 后画面冻结）。")
+                    return True
+        self.log("[Gift] go_to_list_start 已达上限翻页（按到顶处理）。")
         return True
 
     def gift_current_car(self):
