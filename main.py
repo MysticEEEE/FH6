@@ -2808,6 +2808,16 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.log(f"[GiftTest] AI 推理异常: {e}")
                 return None
 
+        def panel_conf():
+            """左侧面板与目标车款数值块的匹配置信度（用于调阈值）。"""
+            try:
+                g = cv2.cvtColor(self.capture_region(self.left_panel_region()),
+                                 cv2.COLOR_BGR2GRAY)
+                tpl = self.load_template_gray("giftbox/target_stats.png")
+                return self.match_template_score(g, tpl)
+            except Exception:
+                return -1.0
+
         def runner():
             try:
                 if not self.check_and_focus_game():
@@ -2847,14 +2857,17 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     crop = self.capture_region(region)
                     self.write_debug_image(
                         os.path.join(debug_dir, f"card_{i + 1:02d}.png"), crop)
-                    tpl_tag = self.selected_card_has_new_tag()   # 模板检测
+                    tpl_tag = self.selected_card_has_new_tag()   # 模板检测全新
+                    is_target = self.selected_car_is_target()    # 左侧面板=目标车款?
+                    p_conf = panel_conf()                        # 面板匹配置信(调阈值用)
                     ai = ai_counts_on(region, model)             # AI 检测
                     ai_str = "AI=跳过"
                     if ai is not None:
                         c, mx = ai
                         ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
                     self.update_running_ui("送车测试", i + 1, N)
-                    self.log(f"[GiftTest] 卡#{i + 1}({hl}) 模板全新={tpl_tag}  {ai_str} "
+                    self.log(f"[GiftTest] 卡#{i + 1}({hl}) 全新={tpl_tag} "
+                             f"目标车={is_target}(panel={p_conf:.2f})  {ai_str} "
                              f"(已存 card_{i + 1:02d}.png)")
                     self.hw_press("right", delay=0.1)
                     time.sleep(0.4)
@@ -2960,6 +2973,25 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
             return True
 
+    def left_panel_region(self):
+        """左侧车辆详情面板「数值块」的搜索区域（比例来自实机整屏 2563×1443）。"""
+        x, y, w, h = self.regions["全界面"]
+        rx, ry, rw, rh = 0.0468, 0.4158, 0.2029, 0.2772
+        return (x + int(w * rx), y + int(h * ry), int(w * rw), int(h * rh))
+
+    def selected_car_is_target(self):
+        """左侧面板数值块是否匹配目标车款（马力/扭矩/车重/前轴/排气 指纹）。
+        用于「动作前正向门槛」：只有是目标车才送/才选。在用车 S2 834 数值不同会不匹配。
+        匹配不上或异常时返回 False（保守：不是目标车就不动作）。"""
+        try:
+            region = self.left_panel_region()
+            pos = self.find_image_gray("giftbox/target_stats.png", region=region,
+                                       threshold=0.75, fast_mode=True)
+            return pos is not None
+        except Exception as e:
+            self.log(f"[Gift] 目标车款检测异常: {e}")
+            return False
+
     def go_to_list_start(self, max_presses=120):
         """快速连按 pageup 翻到列表第一辆，用「增量间隔帧是否冻结」判断到顶。
         要点：不比相邻帧（按键偶尔被吞会让相邻两帧相同 → 误判），而是把当前帧
@@ -2971,8 +3003,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             if not self.is_running:
                 return False
             self.check_pause()
-            self.hw_press("pageup", delay=0.04)   # 加快频率
-            time.sleep(0.06)
+            self.hw_press("pageup", delay=0.05)   # 仅靠 hw_press 内部 delay，无需额外 sleep
             buf.append(self.capture_region(region))
             if len(buf) > 16:
                 buf.pop(0)
