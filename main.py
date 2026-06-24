@@ -418,6 +418,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "smart_page": False,
             "ai_model_path": "models/fh6_car_select_yolo.pt"
         }
+        self.config.update(gift_default_config())
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json，并与底本合并（自动补全缺失项）
         if os.path.exists(ext_path):
@@ -2725,6 +2726,33 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     # ==========================================
     # --- 模块：自动送车 ---
     # ==========================================
+    def start_gift_pipeline(self):
+        if self.is_running:
+            self.log("已有任务正在运行，无法启动送车。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self.save_config()
+        self.reset_run_stats()
+        self.update_running_state("running")
+        self.update_running_ui("自动送车", 0, 0)
+        self.update_timer()
+        self.log("====== 开始自动送车 ======")
+
+        def runner():
+            try:
+                if not self.check_and_focus_game():
+                    self.log("未能聚焦游戏窗口，送车结束。")
+                    return
+                self.logic_gift_duplicate_cars()
+            except Exception as e:
+                self.log(f"送车流程异常: {e}")
+            finally:
+                self.stop_all()
+
+        self.current_thread = threading.Thread(target=runner, daemon=True)
+        self.current_thread.start()
+
     def navigate_to_giftbox(self):
         """进入主菜单 → 车辆页 → 礼物箱 → F筛选 → 勾「重复项」。成功返回 True。"""
         self.log("[Gift] 准备进入主菜单...")

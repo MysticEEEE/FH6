@@ -326,6 +326,12 @@ def setup_ui(bot):
     bot.lbl_runtime_total_time = make_runtime_label("总运行时间", "00:00:00")
     bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 超抽 00:00:00")
 
+    bot.btn_runtime_gift = button(
+        bot.runtime_frame, "自动送车", bot.start_gift_pipeline,
+        color=colors["purple"], hover=colors["purple_hover"], width=92, height=34,
+    )
+    bot.btn_runtime_gift.pack(side="right", padx=(0, 8), pady=14)
+
     bot.btn_runtime_pause = button(
         bot.runtime_frame,
         "暂停 F9",
