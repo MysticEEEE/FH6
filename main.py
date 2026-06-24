@@ -2769,6 +2769,45 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.update_timer()
         self.log("====== 开始送车干跑测试（只检测/存图，绝不送车）======")
 
+        def load_test_yolo():
+            """测试用：无视 ai_assist 开关强制加载 YOLO 模型，失败返回 None。"""
+            m = self.get_yolo_car_select_model()
+            if m is not None:
+                return m
+            try:
+                path = self.resolve_ai_model_path()
+                if not path:
+                    self.log("[GiftTest] 未找到 YOLO 模型文件，跳过 AI 测试。")
+                    return None
+                from ultralytics import YOLO
+                self.log(f"[GiftTest] 强制加载 YOLO 模型: {path}")
+                return YOLO(path)
+            except Exception as e:
+                self.log(f"[GiftTest] YOLO 加载失败，跳过 AI 测试: {e}")
+                return None
+
+        def ai_counts_on(region, model):
+            """在 region 上跑 YOLO，返回 (counts{new,b600,car}, 最大new置信度) 或 None。"""
+            if model is None:
+                return None
+            try:
+                bgr = self.capture_region(region)
+                res = model.predict(source=bgr, imgsz=int(self.config.get("ai_imgsz", 960)),
+                                    conf=0.10, device=self.resolve_ai_device(), verbose=False)[0]
+                counts = {"new": 0, "b600": 0, "car": 0}
+                max_new = 0.0
+                if res.boxes is not None:
+                    for item in res.boxes:
+                        b = self.yolo_box_to_dict(item, conf_threshold=0.0)
+                        if b and b["name"] in counts:
+                            counts[b["name"]] += 1
+                            if b["name"] == "new":
+                                max_new = max(max_new, b["conf"])
+                return counts, max_new
+            except Exception as e:
+                self.log(f"[GiftTest] AI 推理异常: {e}")
+                return None
+
         def runner():
             try:
                 if not self.check_and_focus_game():
@@ -2781,6 +2820,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 full = self.capture_region(self.regions["全界面"])
                 self.write_debug_image(os.path.join(debug_dir, "00_fullscreen.png"), full)
                 self.log(f"[GiftTest] 已存整屏 -> {debug_dir}\\00_fullscreen.png")
+
+                # AI 基线：YOLO 在整屏礼物界面能识别到什么
+                model = load_test_yolo()
+                full_ai = ai_counts_on(self.regions["全界面"], model)
+                if full_ai is not None:
+                    c, mx = full_ai
+                    self.log(f"[GiftTest] AI整屏基线: new={c['new']} b600={c['b600']} car={c['car']} "
+                             f"最大new置信={mx:.2f}")
+
                 for i in range(15):
                     if not self.is_running:
                         break
@@ -2789,9 +2837,16 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     crop = self.capture_region(region)
                     self.write_debug_image(
                         os.path.join(debug_dir, f"card_{i + 1:02d}.png"), crop)
-                    has_tag = self.selected_card_has_new_tag()
+                    # 1) 模板检测（现行安全机制）
+                    tpl_tag = self.selected_card_has_new_tag()
+                    # 2) AI 检测（选中卡区域）
+                    ai = ai_counts_on(region, model)
+                    ai_str = "AI=跳过"
+                    if ai is not None:
+                        c, mx = ai
+                        ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
                     self.update_running_ui("送车测试", i + 1, 15)
-                    self.log(f"[GiftTest] 卡#{i + 1} 全新标记={has_tag} "
+                    self.log(f"[GiftTest] 卡#{i + 1} 模板全新={tpl_tag}  {ai_str} "
                              f"(已存 card_{i + 1:02d}.png)")
                     self.hw_press("right", delay=0.1)
                     time.sleep(0.4)
@@ -2831,15 +2886,19 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.game_click(pos_giftbox)
         time.sleep(1.5)
 
-        # 打开筛选并勾选「重复项」（礼物界面底部提示：Y=筛选；Y → 下×2 → Enter → Esc）
+        # 打开筛选并勾选「重复项」（礼物界面底部提示：Y=筛选）
+        # 菜单项顺序：收藏(默认高亮) → 可用的车身套件和预设配置 → 重复项(第3项) → 性能等级...
+        # 故从默认「收藏」按 下×2 到「重复项」。每步之间留间隔，避免菜单动画吞掉按键。
         self.check_pause()
         self.hw_press("y")
-        time.sleep(0.8)
+        time.sleep(0.9)               # 等筛选菜单完全弹出
         self.hw_press("down", delay=0.12)
+        time.sleep(0.3)               # 关键：两次「下」之间留间隔，否则会被吞掉一次
         self.hw_press("down", delay=0.12)
-        self.hw_press("enter", delay=0.12)   # 勾选「重复项」（筛选菜单第 3 项，默认高亮在「收藏」）
-        time.sleep(0.5)
-        self.hw_press("esc")
+        time.sleep(0.3)
+        self.hw_press("enter", delay=0.12)   # 勾选「重复项」
+        time.sleep(0.6)
+        self.hw_press("esc")          # 返回并应用筛选
         time.sleep(1.2)
         self.log("[Gift] 已进入礼物箱并应用「重复项」筛选。")
         return True
