@@ -2815,6 +2815,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
     def selected_card_has_new_tag(self) -> bool:
         """选中卡是否带「全新」标记。识别不确定时返回 True（安全默认：不送）。"""
+        if not self.is_running:
+            return True
         try:
             region = self.selected_card_region()
             pos = self.find_image_gray("newcartag.png", region=region,
@@ -2841,6 +2843,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         if not self.wait_for_image_gray("giftbox/recipient.png", region=self.regions["全界面"],
                                         threshold=0.7, timeout=4, interval=0.2, fast_mode=True):
             self.log("[Gift] 未进入赠送对话框，跳过本卡。")
+            self.hw_press("esc")
+            time.sleep(0.5)
             return "fail"
 
         # 默认：任何人 → 话语 → 名称
@@ -2853,6 +2857,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         if not self.wait_for_image_gray("giftbox/sent.png", region=self.regions["全界面"],
                                         threshold=0.7, timeout=8, interval=0.25, fast_mode=True):
             self.log("[Gift] 未出现「礼物已送出」，按失败处理。")
+            self.hw_press("esc")
+            time.sleep(0.5)
             return "fail"
         self.hw_press("enter")          # 确定 → 回到网格
         time.sleep(1.0)
@@ -2880,6 +2886,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             grid_present = self.find_image_gray(
                 "giftbox/grid.png", region=self.regions["全界面"],
                 threshold=0.7, fast_mode=True) is not None
+            # 粗略哨兵：仅表示网格锚点是否还在，并非真实剩余数量。
+            # 真正的终止靠 gift_current_car 返回 "cannot" 与 SKIP_LIMIT；
+            # remaining=1 仅在网格锚点消失（异常/退出）时触发兜底停止。
             remaining = 99 if grid_present else 1
 
             stop, reason = should_stop_gifting(
