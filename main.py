@@ -2795,6 +2795,40 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
             return True
 
+    def gift_current_car(self):
+        """对当前选中卡执行赠送序列。返回 'sent' / 'cannot' / 'fail'。"""
+        self.hw_press("enter")          # 选中卡 → 弹「将礼物赠送给」或「无法送出」
+        time.sleep(0.8)
+
+        # 优先判定「无法送出」（停止主信号）
+        if self.find_image_gray("giftbox/cannot.png", region=self.regions["全界面"],
+                                 threshold=0.7, fast_mode=True):
+            self.log("[Gift] 检测到「无法送出」。")
+            self.hw_press("enter")      # 关掉提示
+            time.sleep(0.6)
+            return "cannot"
+
+        # 确认进入赠送序列
+        if not self.wait_for_image_gray("giftbox/recipient.png", region=self.regions["全界面"],
+                                        threshold=0.7, timeout=4, interval=0.2, fast_mode=True):
+            self.log("[Gift] 未进入赠送对话框，跳过本卡。")
+            return "fail"
+
+        # 默认：任何人 → 话语 → 名称
+        for _ in range(3):
+            self.check_pause()
+            self.hw_press("enter")
+            time.sleep(0.7)
+
+        # 等「礼物已送出」成功提示（含转圈 1-3 秒）
+        if not self.wait_for_image_gray("giftbox/sent.png", region=self.regions["全界面"],
+                                        threshold=0.7, timeout=8, interval=0.25, fast_mode=True):
+            self.log("[Gift] 未出现「礼物已送出」，按失败处理。")
+            return "fail"
+        self.hw_press("enter")          # 确定 → 回到网格
+        time.sleep(1.0)
+        return "sent"
+
 if __name__ == "__main__":
     app = FH_UltimateBot()
     app.mainloop()
