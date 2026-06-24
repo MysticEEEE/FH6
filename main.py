@@ -2831,13 +2831,13 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.game_click(pos_giftbox)
         time.sleep(1.5)
 
-        # 打开筛选并勾选「重复项」（礼物界面 F=筛选；F → 下×2 → Enter → Esc）
+        # 打开筛选并勾选「重复项」（礼物界面底部提示：Y=筛选；Y → 下×2 → Enter → Esc）
         self.check_pause()
-        self.hw_press("f")
+        self.hw_press("y")
         time.sleep(0.8)
         self.hw_press("down", delay=0.12)
         self.hw_press("down", delay=0.12)
-        self.hw_press("enter", delay=0.12)   # 勾选「重复项」（筛选菜单第 3 项）
+        self.hw_press("enter", delay=0.12)   # 勾选「重复项」（筛选菜单第 3 项，默认高亮在「收藏」）
         time.sleep(0.5)
         self.hw_press("esc")
         time.sleep(1.2)
