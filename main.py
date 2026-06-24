@@ -2720,6 +2720,58 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.hw_press("esc")
             time.sleep(1.2)
         return True
+
+    # ==========================================
+    # --- 模块：自动送车 ---
+    # ==========================================
+    def navigate_to_giftbox(self):
+        """进入主菜单 → 车辆页 → 礼物箱 → F筛选 → 勾「重复项」。成功返回 True。"""
+        self.log("[Gift] 准备进入主菜单...")
+        if not self.enter_menu():
+            self.log("[Gift] 进入主菜单失败。")
+            return False
+
+        # 切到「车辆」标签页并定位礼物箱入口（复用跑图导航的翻页/锚点模式）
+        pos_entry = None
+        for _ in range(6):
+            if not self.is_running:
+                return False
+            self.check_pause()
+            pos_entry = self.wait_for_image_gray(
+                "giftbox/entry.png", region=self.regions["全界面"],
+                threshold=0.7, timeout=1.5, interval=0.2, fast_mode=True)
+            if pos_entry:
+                break
+            self.hw_press("pagedown", delay=0.15)
+            time.sleep(0.4)
+        if not pos_entry:
+            self.log("[Gift] 未找到礼物箱入口。")
+            return False
+        self.game_click(pos_entry)
+        time.sleep(1.5)
+
+        # 确认进入礼物选择网格
+        if not self.wait_for_image_gray("giftbox/grid.png", region=self.regions["全界面"],
+                                        threshold=0.7, timeout=8, interval=0.25, fast_mode=True):
+            self.log("[Gift] 未进入礼物选择网格。")
+            return False
+
+        # 打开筛选并勾选「重复项」（F → 下×2 → Enter → Esc）
+        self.hw_press("f")
+        time.sleep(0.8)
+        if not self.wait_for_image_gray("giftbox/filter_title.png", region=self.regions["全界面"],
+                                        threshold=0.7, timeout=5, interval=0.25, fast_mode=True):
+            self.log("[Gift] 未打开筛选菜单。")
+            return False
+        self.hw_press("down", delay=0.12)
+        self.hw_press("down", delay=0.12)
+        self.hw_press("enter", delay=0.12)   # 勾选「重复项」
+        time.sleep(0.5)
+        self.hw_press("esc")
+        time.sleep(1.2)
+        self.log("[Gift] 已进入礼物箱并应用「重复项」筛选。")
+        return True
+
 if __name__ == "__main__":
     app = FH_UltimateBot()
     app.mainloop()
