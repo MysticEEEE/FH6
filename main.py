@@ -2951,8 +2951,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return True
         try:
             region = self.find_selected_card_region() or self.selected_card_region()
+            # fast_mode=False：礼物界面「全新」标记需 ~1.6 倍尺度（1600基准），
+            # fast_mode 的前8尺度只到 1.335 会漏掉它（实测 fast 仅0.51，full 0.92）。
             pos = self.find_image_gray("newcartag.png", region=region,
-                                       threshold=0.68, fast_mode=True)
+                                       threshold=0.68, fast_mode=False)
             return pos is not None
         except Exception as e:
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
