@@ -1440,6 +1440,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     self.start_test_find_image()
                 elif k == keyboard.Key.f4:  # <--- 【新增】F4 单张识别当前选中卡
                     self.recognize_current_card()
+                elif k == keyboard.Key.f5:  # <--- 【新增】F5 大范围识别（专精同款）
+                    self.recognize_largerange()
                 elif k == keyboard.Key.f6:  # <--- 【新增】F6 存当前完整截图
                     self.capture_full_debug()
 
@@ -2865,6 +2867,44 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.ui_call(self.lift)   # 恢复 GUI 到前面，方便看日志
         threading.Thread(target=work, daemon=True).start()
 
+    def recognize_largerange(self):
+        """F5：专精加点同款【大范围】识别——在整个选车界面扫描全新消耗车
+        （find_new_consumable_car_strict），标注命中位置存图，只读不点击。
+        用于测专精选车界面的识别（它不是按选中框、而是全屏找全新车）。"""
+        def work():
+            prev_running = self.is_running
+            self.is_running = True
+            try:
+                self.ui_call(self.lower)
+                time.sleep(0.3)
+                self.check_and_focus_game()
+                time.sleep(0.3)
+                region = self.regions["全界面"]
+                full = self.capture_region(region)
+                pos = self.find_new_consumable_car_strict(region=region, save_miss=False)
+                pconf = self.gift_panel_conf()
+                ai = self.gift_ai_counts(region, self.gift_load_yolo())
+                annotated = full.copy()
+                if pos:
+                    px, py = int(pos[0] - region[0]), int(pos[1] - region[1])
+                    cv2.circle(annotated, (px, py), 45, (0, 0, 255), 5)
+                debug_dir = os.path.join(get_app_dir(), "debug", "skill_test")
+                stamp = time.strftime("%H%M%S")
+                fname = f"f5_{stamp}.png"
+                self.write_debug_image(os.path.join(debug_dir, fname), annotated)
+                ai_str = "AI=跳过"
+                if ai is not None:
+                    c, mx = ai
+                    ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
+                self.log(f"[F5] 大范围全新车={'命中@'+str([int(v) for v in pos]) if pos else '未找到'} "
+                         f"当前选中卡目标车panel={pconf:.2f}  {ai_str} -> debug/skill_test/{fname}")
+            except Exception as e:
+                self.log(f"[F5] 识别异常: {e}")
+            finally:
+                self.is_running = prev_running
+                self.ui_call(self.lift)
+        threading.Thread(target=work, daemon=True).start()
+
     def capture_full_debug(self):
         """F6：存当前游戏完整截图到 debug/screenshots。"""
         def work():
@@ -3071,10 +3111,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def selected_car_is_target(self):
         """左侧面板数值块是否匹配目标车款（马力/扭矩/车重/前轴/排气 指纹）。
         用于「动作前正向门槛」：只有是目标车才送/才选。
-        逐字段数值匹配取最小值，阈值 0.85——实测目标≈1.0、菲亚特131≈0.72、S2 834≈0.62，干净区分。
+        逐字段数值匹配取最小值，阈值 0.87——实测目标最低≈0.90、其他车最高≈0.83，干净区分。
         不匹配或异常返回 False（保守：不是目标车就不动作）。不依赖 is_running。"""
         try:
-            return self.gift_panel_conf() >= 0.85
+            return self.gift_panel_conf() >= 0.87
         except Exception as e:
             self.log(f"[Gift] 目标车款检测异常: {e}")
             return False
