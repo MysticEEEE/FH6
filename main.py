@@ -2960,30 +2960,20 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log(f"[Gift] 全新标记检测异常，按有标记处理: {e}")
             return True
 
-    def go_to_list_start(self, max_presses=80, stable_needed=3):
-        """连续按 pageup 直到网格画面连续若干帧无明显变化（到达第一辆车）。
-        用帧差均值判断是否到达边界，不依赖模板。"""
-        region = self.regions["全界面"]
-        prev = None
-        stable = 0
-        for _ in range(max_presses):
+    def go_to_list_start(self, presses=90):
+        """按固定次数 pageup 翻到列表第一辆车（到顶后继续按为无操作，安全）。
+        不用帧差检测：重复车列表每页画面几乎一样，帧差会在没到顶时误判稳定提前停。
+        用户实测约 60-61 页到第一辆，这里留足余量并兼顾按键可能被吞。"""
+        self.log(f"[Gift] 翻到列表起点（pageup ×{presses}）...")
+        for i in range(presses):
             if not self.is_running:
                 return False
             self.check_pause()
-            self.hw_press("pageup", delay=0.1)
-            time.sleep(0.35)
-            cur = self.capture_region(region)
-            if prev is not None:
-                diff = float(np.mean(cv2.absdiff(cur, prev)))
-                if diff < 1.5:
-                    stable += 1
-                    if stable >= stable_needed:
-                        self.log("[Gift] 已到列表起点（画面连续稳定）。")
-                        return True
-                else:
-                    stable = 0
-            prev = cur
-        self.log("[Gift] go_to_list_start 翻到上限，按到顶处理。")
+            self.hw_press("pageup", delay=0.08)
+            time.sleep(0.16)
+            if (i + 1) % 30 == 0:
+                self.log(f"[Gift] go_to_list_start 进度 {i + 1}/{presses}")
+        self.log("[Gift] 已翻到列表起点。")
         return True
 
     def gift_current_car(self):
