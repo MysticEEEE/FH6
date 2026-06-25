@@ -3695,36 +3695,40 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             threshold=0.7, fast_mode=False) is not None
 
     def skip_wheelspin_animation(self):
-        """转盘动画期间按 enter 跳过（动画不涉及车辆，enter 安全），直到奖励结果界面就位。
-        关键：一旦检测到结果界面（respin 提示）立即停手，绝不再多按 enter，
-        以免误把「领取并再抽」走成 enter（结果界面 enter=领取，若紧跟已拥有对话框会落到选项1）。"""
-        # 流程：转盘旋转(左下「跳过 Enter」) → 按一次 Enter 跳过 → 约 3-4 秒闪光+画面稳定 →
-        # 结果界面(左下「Enter 领取并再抽」/「Esc 领取」, 即 respin.png)。
-        # 铁律：一旦结果界面出现就立刻停手，绝不再按 Enter——那里 Enter=再抽，多按就是过抽/误入库。
-        for attempt in range(3):
+        """跳过转盘旋转：识别左下角「跳过」按钮(skip.png) 并【点击】→ 从点击起约 4 秒(闪光+画面稳定)
+        → 再识别结果界面 respin.png（左下「Enter 领取并再抽」/「Esc 领取」）。
+        铁律：结果界面一出现立刻停手——那里点击/Enter=再抽，多动作就是过抽/重复车误入库。
+        识别不到「跳过」时只等待让动画自然结束，绝不盲按键。"""
+        for attempt in range(4):
             if not self.is_running:
                 return False
             self.check_pause()
-            # 已是结果界面 → 立刻返回，不再按键
+            # 已是结果界面 → 立刻返回，不再有任何动作
             if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True):
                 return True
             if self.is_wheelspin_finished():
                 return False
-            # 仍在转盘旋转 → 只按一次 Enter 请求跳过
-            self.hw_press("enter")
-            # 闪光难判，用时间：跳过后约 3-4 秒画面稳定。其间【只轮询结果界面，绝不再按键】。
-            deadline = time.time() + 5.0
-            while time.time() < deadline:
+            # 识别左下角「跳过」按钮 → 点击它（识别不到则不按键，等动画自然结束）
+            pos_skip = self.find_image_gray("wheelspin/skip.png", region=self.regions["全界面"],
+                                            threshold=0.7, fast_mode=True)
+            if pos_skip:
+                self.game_click(pos_skip)
+                self.log("[Wheelspin] 点击「跳过」跳过转盘动画。")
+            # 从点击起约 4 秒（闪光+画面稳定），期间可中断但【不提前判定结果，也不按键】
+            waited = 0.0
+            while waited < 4.0:
                 if not self.is_running:
                     return False
                 self.check_pause()
-                if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
-                                        threshold=0.7, fast_mode=True):
-                    return True
-                if self.is_wheelspin_finished():
-                    return False
-                time.sleep(0.4)
+                time.sleep(0.3)
+                waited += 0.3
+            # 4 秒后再识别结果界面
+            if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True):
+                return True
+            if self.is_wheelspin_finished():
+                return False
         return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True) is not None
 
