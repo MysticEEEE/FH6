@@ -159,8 +159,8 @@ def setup_ui(bot):
     box_cj, bot.btn_cj, bot.entry_cj, bot.lbl_cj = create_task_card(
         bot.config_frame,
         2,
-        "3. 超级抽奖",
-        "技能点与抽奖流程",
+        "3. 专精加点",
+        "车辆专精/技能点",
         "开始",
         lambda: bot.start_pipeline("cj"),
         colors["purple"],
@@ -254,8 +254,8 @@ def setup_ui(bot):
     next_grid.pack(fill="x", padx=14, pady=(0, 8))
     for idx, (text, var, default) in enumerate([
         ("跑图➡买车", bot.var_chk1, bot.config.get("next_1", 2)),
-        ("买车➡抽奖", bot.var_chk2, bot.config.get("next_2", 3)),
-        ("抽奖➡跑图", bot.var_chk3, bot.config.get("next_3", 1)),
+        ("买车➡专精", bot.var_chk2, bot.config.get("next_2", 3)),
+        ("专精➡跑图", bot.var_chk3, bot.config.get("next_3", 1)),
     ]):
         row = ctk.CTkFrame(next_grid, fg_color="transparent")
         row.pack(fill="x", pady=5)
@@ -332,7 +332,7 @@ def setup_ui(bot):
     bot.lbl_runtime_loop = make_runtime_label("大循环", "0 / 0")
     bot.lbl_runtime_task_time = make_runtime_label("本任务耗时", "00:00:00")
     bot.lbl_runtime_total_time = make_runtime_label("总运行时间", "00:00:00")
-    bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 超抽 00:00:00")
+    bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 专精 00:00:00")
 
     bot.btn_runtime_gift = button(
         bot.runtime_frame, "自动送车", bot.start_gift_pipeline,

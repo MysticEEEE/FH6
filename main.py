@@ -337,7 +337,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.task_time_totals = {
             "循环跑图": 0.0,
             "批量买车": 0.0,
-            "超级抽奖": 0.0,
+            "专精加点": 0.0,
             "测试启动": 0.0,
             "F3测图": 0.0,
         }
@@ -728,14 +728,14 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         totals = getattr(self, "task_time_totals", {})
         race_total = totals.get("循环跑图", 0.0)
         buy_total = totals.get("批量买车", 0.0)
-        cj_total = totals.get("超级抽奖", 0.0)
+        cj_total = totals.get("专精加点", 0.0)
 
         active_task = getattr(self, "active_task_name", "")
         if active_task == "循环跑图":
             race_total += task_elapsed
         elif active_task == "批量买车":
             buy_total += task_elapsed
-        elif active_task == "超级抽奖":
+        elif active_task == "专精加点":
             cj_total += task_elapsed
 
         try:
@@ -745,7 +745,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 text=(
                     f"跑图 {self.format_elapsed(race_total)} | "
                     f"买车 {self.format_elapsed(buy_total)} | "
-                    f"超抽 {self.format_elapsed(cj_total)}"
+                    f"专精 {self.format_elapsed(cj_total)}"
                 )
             )
         except Exception: pass
@@ -784,7 +784,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.lbl_runtime_loop.configure(text="0 / 0")
                 self.lbl_runtime_task_time.configure(text="00:00:00")
                 self.lbl_runtime_total_time.configure(text="00:00:00")
-                self.lbl_runtime_totals.configure(text="跑图 00:00:00 | 买车 00:00:00 | 超抽 00:00:00")
+                self.lbl_runtime_totals.configure(text="跑图 00:00:00 | 买车 00:00:00 | 专精 00:00:00")
                 self.btn_runtime_pause.configure(state="disabled", text="暂停 F9", fg_color="#F1C40F", hover_color="#D4AC0D", text_color="#111827")
                 self.btn_runtime_stop.configure(state="disabled")
                 self.btn_stop.configure(text="等待指令 (F8)", fg_color="#222B36", hover_color="#2F3B4A")
@@ -1513,7 +1513,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     elif step_name == "buy":
                         success = self.logic_buy_car(int(self.entry_car.get()))
                     elif step_name == "cj":
-                        success = self.logic_super_wheelspin(int(self.entry_cj.get()))
+                        success = self.logic_skill_points(int(self.entry_cj.get()))
                 except Exception as e:
                     self.log(f"执行模块 {step_name} 时异常: {e}")
                     success = False
@@ -2793,11 +2793,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         time.sleep(1.2)
         return True
 
-    def logic_super_wheelspin(self, target_count):
+    def logic_skill_points(self, target_count):
+        # 注：历史名为「超级抽奖」，实为给车辆点专精/技能点；config 键仍沿用 cj_* 保持兼容。
         if self.cj_counter >= target_count:
             return True
 
-        self.update_running_ui("超级抽奖", self.cj_counter, target_count)
+        self.update_running_ui("专精加点", self.cj_counter, target_count)
         # 【新增】：初始化记忆页码
         if not hasattr(self, 'memory_car_page'):
             self.memory_car_page = 0
@@ -2985,7 +2986,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                         time.sleep(1.0)
                     return True
                 self.cj_counter += 1
-                self.update_running_ui("超级抽奖", self.cj_counter, target_count)
+                self.update_running_ui("专精加点", self.cj_counter, target_count)
 
             if not self.return_to_vehicle_menu_after_mastery():
                 return False
@@ -3349,7 +3350,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log("[Gift] 进入主菜单失败。")
             return False
 
-        # 复用超抽同款路径：pagedown 进「车辆与收藏」，用 BNandUC.png 锚定车辆页（只确认到位，不点它）
+        # 复用专精加点同款路径：pagedown 进「车辆与收藏」，用 BNandUC.png 锚定车辆页（只确认到位，不点它）
         self.log("[Gift] 进入车辆页...")
         self.hw_press("pagedown", delay=0.15)
         time.sleep(1.0)
