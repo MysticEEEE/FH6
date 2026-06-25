@@ -455,9 +455,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return False
 
         window_signature = (int(region[2]), int(region[3]))
-        prev_sig = self.match_calibration.get("window_signature")
+        sig_bucket = (window_signature[0] // 32, window_signature[1] // 32)  # 32px 量化，容忍窗口小幅抖动
+        prev_bucket = self.match_calibration.get("sig_bucket")
         prev_time = float(self.match_calibration.get("updated_at", 0.0) or 0.0)
-        if not force and prev_sig == window_signature and (time.time() - prev_time) < 20:
+        if not force and prev_bucket is not None and prev_bucket == sig_bucket and (time.time() - prev_time) < 60:
             self.update_match_calibration_ui()
             return True
 
@@ -528,7 +529,13 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                             "score": float(score),
                         }
 
-            preferred_scale = 1.0
+            # 兜底缩放比：不再用 1.0（那对非 2560 窗口是错的），而是用
+            # 「几何估计 当前宽/2560」；若之前已成功锁定过缩放比则保留它（粘性），
+            # 这样在没有好锚点的画面（送车网格/抽奖过渡）重算时也不会回退到错误的 1.0。
+            geometric_scale = round(max(0.45, min(1.8, curr_w / 2560.0)), 3)
+            prev_scale = float(self.match_calibration.get("preferred_scale", 0.0) or 0.0)
+            prev_ready = self.match_calibration.get("state") == "ready"
+            preferred_scale = prev_scale if (prev_ready and 0.45 <= prev_scale <= 1.8) else geometric_scale
             anchor_name = "none"
             anchor_score = 0.0
             state = "fallback"
@@ -573,6 +580,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 "anchor": anchor_name,
                 "anchor_score": anchor_score,
                 "window_signature": window_signature,
+                "sig_bucket": sig_bucket,
                 "updated_at": time.time(),
             })
             self.update_match_calibration_ui()
@@ -582,14 +590,18 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             )
             return True
         except Exception as e:
+            # 异常兜底也用几何估计/上次成功值，而非错误的 1.0
+            prev_scale = float(self.match_calibration.get("preferred_scale", 0.0) or 0.0)
+            fb_scale = prev_scale if 0.45 <= prev_scale <= 1.8 else round(max(0.45, min(1.8, float(region[2]) / 2560.0)), 3)
             self.match_calibration.update({
                 "state": "error",
                 "status": "校准失败",
-                "detail": f"使用默认参数继续: {e}",
-                "preferred_scale": 1.0,
+                "detail": f"使用兜底缩放 {fb_scale} 继续: {e}",
+                "preferred_scale": fb_scale,
                 "gray_threshold_offset": 0.0,
                 "edge_bias": 0.0,
                 "window_signature": window_signature,
+                "sig_bucket": sig_bucket,
                 "updated_at": time.time(),
             })
             self.update_match_calibration_ui()
@@ -2075,7 +2087,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         # ==========================================
         # 动态读取 images/obstacles/ 里的所有图片
         # ==========================================
-        obstacles_dir = os.path.join("images", "obstacles")
+        obstacles_dir = get_img_path("obstacles")   # 用绝对路径，避免非应用目录启动(快捷方式/打包exe)时障碍清理失效
         dynamic_obstacles = []
 
         # 检查文件夹是否存在
@@ -3684,6 +3696,13 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             time.sleep(1.0)
         return False
 
+    def collect_only(self):
+        """最后一抽：只领取、不再抽——按 ESC 领取奖励（不是 enter，enter 会再抽）。
+        领取后正常直接回到「我的地平线」；若领取触发了「已拥有车辆」对话框，由调用方再出售。"""
+        self.hw_press("esc")
+        time.sleep(1.2)
+        return True
+
     def handle_owned_car_dialog(self):
         """检测「已拥有车辆」对话框并卖出重复车。超抽一次最多 3 车，可能连续弹多个对话框，
         故循环处理直到检测不到为止。返回处理过的对话框数量。
@@ -3722,22 +3741,20 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return False
 
         self._wheelspin_respin_pos = None  # 「领取并再抽」按钮坐标缓存
-        spins = 0
+        spins = 1                          # 点击入口本身已自动触发第 1 抽，计入
         no_result_streak = 0
         self.update_running_ui("自动抽奖", spins, max_count or 0)
+        self.log(f"[Wheelspin] 入口已触发第 1 抽（上限={max_count or '不限'}）。")
 
         while self.is_running:
             self.check_pause()
 
-            # 停止判断（确定性退回菜单 > 次数上限安全阀）
-            returned = self.is_wheelspin_finished()
-            stop, reason = should_stop_wheelspin(
-                returned_to_menu=returned, spin_count=spins, max_count=max_count)
-            if stop:
-                self.log(f"[Wheelspin] 停止：{reason}")
+            # 确定性结束：已退回「我的地平线」菜单（次数耗尽会自动返回）
+            if self.is_wheelspin_finished():
+                self.log("[Wheelspin] 已退回菜单，抽奖结束。")
                 break
 
-            # 1. 跳过转盘动画 → 等结果界面
+            # 1. 跳过当前这一抽的转盘动画 → 等结果界面
             self.skip_wheelspin_animation()
 
             # 2. 确认奖励结果界面就位
@@ -3754,13 +3771,19 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 continue
             no_result_streak = 0
 
-            # 3. 领取并再抽（鼠标点击按钮）
+            # 3. 达次数上限 → 这是最后一抽：只领取(ESC)不再抽，再处理已拥有对话框，结束
+            if max_count and spins >= max_count:
+                self.log(f"[Wheelspin] 第 {spins} 抽为最后一抽 → 按 ESC 仅领取不再抽。")
+                self.collect_only()
+                self.handle_owned_car_dialog()   # 领取后仍可能弹「已拥有」→ 出售，再回菜单
+                self.log(f"[Wheelspin] 达到上限 {max_count}，停止。")
+                break
+
+            # 4. 非最后一抽：领取并再抽（触发下一抽）→ 计数+1 → 处理本抽的已拥有对话框
             self.collect_and_respin()
             spins += 1
             self.update_running_ui("自动抽奖", spins, max_count or 0)
-            self.log(f"[Wheelspin] 已完成第 {spins} 抽。")
-
-            # 4. 处理「已拥有车辆」对话框（可能连续多张）
+            self.log(f"[Wheelspin] 已触发第 {spins} 抽。")
             self.handle_owned_car_dialog()
 
         self.log(f"[Wheelspin] 抽奖流程结束，共抽 {spins} 次。")
