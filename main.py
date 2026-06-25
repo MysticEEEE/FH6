@@ -3060,24 +3060,41 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         ]
         try:
             x, y, w, h = self.regions["全界面"]
-            # 关键：数值小图是按 2560 基准裁的，窗口变小时屏上数字也变小，
-            # 必须按自适应校准的缩放比把模板同步缩小，否则匹配骤降（窗口尺寸一变 panel 就失效）。
-            scale = 1.0
+            # 关键：数值小图按 2560 基准裁制，窗口变小时屏上数字同步变小。单一缩放比对小图太敏感
+            # （校准误差/UI 非线性缩放都会让它崩），故在【校准比例附近做多尺度扫描】取最佳——
+            # 这样窗口任意尺寸都能自己找到对的模板大小，不再只有 ~2560 才行。
+            base = 1.0
             try:
                 if hasattr(self, "match_calibration"):
-                    scale = float(self.match_calibration.get("preferred_scale", 1.0) or 1.0)
+                    base = float(self.match_calibration.get("preferred_scale", 1.0) or 1.0)
             except Exception:
-                scale = 1.0
+                base = 1.0
+            scales = []
+            for f in (0.85, 0.91, 0.97, 1.0, 1.03, 1.09, 1.15):
+                s = round(base * f, 3)
+                if 0.3 <= s <= 2.0 and s not in scales:
+                    scales.append(s)
             confs = []
             for tpl_path, (rx, ry, rw, rh) in fields:
-                m = 30  # 搜索边距（容忍面板位置在不同截图间的轻微抖动）
+                m = 45  # 较大搜索边距，容忍面板位置随窗口尺寸的偏移
                 reg = (x + int(w * rx) - m, y + int(h * ry) - m,
                        int(w * rw) + 2 * m, int(h * rh) + 2 * m)
                 g = cv2.cvtColor(self.capture_region(reg), cv2.COLOR_BGR2GRAY)
-                tpl = self.load_template_gray(tpl_path)
-                if tpl is not None and abs(scale - 1.0) > 0.01:
-                    tpl = cv2.resize(tpl, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-                confs.append(self.match_template_score(g, tpl))
+                tpl_raw = self.load_template_gray(tpl_path)
+                if tpl_raw is None:
+                    confs.append(-1.0)
+                    continue
+                best = -1.0
+                for s in scales:
+                    tpl = tpl_raw if abs(s - 1.0) < 0.01 else cv2.resize(
+                        tpl_raw, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+                    th, tw = tpl.shape[:2]
+                    if th < 5 or tw < 5 or th > g.shape[0] or tw > g.shape[1]:
+                        continue
+                    sc = self.match_template_score(g, tpl)
+                    if sc > best:
+                        best = sc
+                confs.append(best)
             return min(confs) if confs else -1.0
         except Exception:
             return -1.0
