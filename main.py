@@ -698,6 +698,13 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.config["wheelspin_max_count"] = max(0, int(self.entry_wheelspin_max.get()))
             except Exception:
                 pass
+        if hasattr(self, "entry_gift_max"):
+            try:
+                self.config["gift_max_count"] = max(0, int(self.entry_gift_max.get()))
+            except Exception:
+                pass
+        if hasattr(self, "var_chk_gift"):
+            self.config["chk_gift"] = self.var_chk_gift.get()
         try:
             with open(USER_CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
@@ -1559,6 +1566,16 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     else: break
 
                 if next_idx <= curr_idx:
+                    # 任务链：一轮大循环回环时，若启用「自动送车」纳入链则送车一次（送到完/上限，无需次数路由）
+                    if getattr(self, "var_chk_gift", None) is not None and self.var_chk_gift.get() and self.is_running:
+                        self.log("[链] 本轮纳入自动送车...")
+                        try:
+                            self.logic_gift_duplicate_cars()
+                        except Exception as e:
+                            self.log(f"[链] 送车异常: {e}")
+                        if not self.is_running:
+                            break
+
                     self.global_loop_current += 1
 
                     if self.global_loop_current > total_loops:

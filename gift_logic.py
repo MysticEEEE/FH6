@@ -18,5 +18,5 @@ def should_stop_gifting(*, cannot_gift_detected, remaining_cards,
 
 
 def gift_default_config():
-    """送车功能写入 config 的默认项。"""
-    return {"gift_max_count": 200}
+    """送车功能写入 config 的默认项。gift_max_count=0 表示送到没有为止（不限数量）。"""
+    return {"gift_max_count": 0, "chk_gift": False}

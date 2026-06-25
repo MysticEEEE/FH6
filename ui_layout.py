@@ -91,6 +91,7 @@ def setup_ui(bot):
     bot.var_ai_only = ctk.BooleanVar(value=bot.config.get("ai_only", False))
     bot.var_ai_auto_capture = ctk.BooleanVar(value=bot.config.get("ai_auto_capture", False))
     bot.var_auto_restart = ctk.BooleanVar(value=False)
+    bot.var_chk_gift = ctk.BooleanVar(value=bot.config.get("chk_gift", False))
 
     bot.main_container = ctk.CTkFrame(bot, fg_color="transparent")
     bot.main_container.pack(fill="both", expand=True, padx=18, pady=18)
@@ -268,6 +269,13 @@ def setup_ui(bot):
         else:
             bot.entry_next3 = nxt
 
+    # 自动送车纳入任务链：仅开关，无次数/路由——每轮大循环回环时送一次（送到完或上限）
+    gift_chain_row = ctk.CTkFrame(next_grid, fg_color="transparent")
+    gift_chain_row.pack(fill="x", pady=5)
+    ctk.CTkCheckBox(gift_chain_row, text="送车(纳入链)", variable=bot.var_chk_gift, width=82,
+                    font=font_small, command=bot.save_config).pack(side="left")
+    label(gift_chain_row, "送完即止", color=colors["muted_2"], font=font_small).pack(side="left", padx=(6, 0))
+
     bot.chk1 = bot.var_chk1
     bot.chk2 = bot.var_chk2
     bot.chk3 = bot.var_chk3
@@ -331,6 +339,12 @@ def setup_ui(bot):
         color=colors["purple"], hover=colors["purple_hover"], width=92, height=34,
     )
     bot.btn_runtime_gift.pack(side="right", padx=(0, 8), pady=14)
+
+    # 送车数量（0=送到没有为止）
+    bot.entry_gift_max = entry(bot.runtime_frame, width=56, height=30)
+    bot.entry_gift_max.insert(0, str(bot.config.get("gift_max_count", 0)))
+    bot.entry_gift_max.pack(side="right", padx=(0, 6), pady=14)
+    label(bot.runtime_frame, "送车数量", color=colors["muted"], font=font_small).pack(side="right", padx=(0, 4))
 
     # --- 自动抽奖：模式选择（抽奖/超级抽奖） + 次数上限 + 启动按钮 ---
     bot.btn_runtime_wheelspin = button(
