@@ -332,6 +332,32 @@ def setup_ui(bot):
     )
     bot.btn_runtime_gift.pack(side="right", padx=(0, 8), pady=14)
 
+    # --- 自动抽奖：模式选择（抽奖/超级抽奖） + 次数上限 + 启动按钮 ---
+    bot.btn_runtime_wheelspin = button(
+        bot.runtime_frame, "自动抽奖", bot.start_wheelspin_pipeline,
+        color=colors["green"], hover=colors["green_hover"], width=92, height=34,
+    )
+    bot.btn_runtime_wheelspin.pack(side="right", padx=(0, 8), pady=14)
+
+    bot.entry_wheelspin_max = entry(bot.runtime_frame, width=56, height=30)
+    bot.entry_wheelspin_max.insert(0, str(bot.config.get("wheelspin_max_count", 0)))
+    bot.entry_wheelspin_max.pack(side="right", padx=(0, 6), pady=14)
+    label(bot.runtime_frame, "次数", color=colors["muted"], font=font_small).pack(side="right", padx=(0, 4))
+
+    bot.opt_wheelspin_mode = ctk.CTkOptionMenu(
+        bot.runtime_frame,
+        values=["抽奖", "超级抽奖"],
+        width=96,
+        height=30,
+        fg_color=colors["panel_2"],
+        button_color=colors["green"],
+        button_hover_color=colors["green_hover"],
+        font=font_small,
+        command=lambda _v: bot.save_config(),
+    )
+    bot.opt_wheelspin_mode.set(bot.config.get("wheelspin_mode", "抽奖"))
+    bot.opt_wheelspin_mode.pack(side="right", padx=(0, 8), pady=14)
+
     bot.btn_runtime_gift_test = button(
         bot.runtime_frame, "送车测试", bot.start_gift_test,
         color="#5A6473", hover="#6B7585", width=92, height=34,
