@@ -1434,6 +1434,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             def on_press(k):
                 if k == keyboard.Key.f8:
                     self.stop_all()
+                elif k == keyboard.Key.f2:  # <--- 【新增】F2 单车送车测试
+                    self.gift_one_card_test()
                 elif k == keyboard.Key.f9:  # <--- 【新增】F9 快捷键
                     self.toggle_pause()
                 elif k == keyboard.Key.f3:  # <--- 【新增】F3 测试找图
@@ -2865,6 +2867,46 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             finally:
                 self.is_running = prev_running
                 self.ui_call(self.lift)   # 恢复 GUI 到前面，方便看日志
+        threading.Thread(target=work, daemon=True).start()
+
+    def gift_one_card_test(self):
+        """F2：单车送车测试——对当前选中卡走真实送车决策：
+        全新标记→跳过不送；非目标车→跳过不送；否则真实送出（gift_current_car）。
+        手动选好车辆卡片后按 F2 触发。检测期间下沉 GUI 避免遮挡。"""
+        def work():
+            if self.is_running:
+                self.log("[F2] 已有任务运行中，忽略。")
+                return
+            self.is_running = True
+            self.is_paused = False
+            self.update_running_state("running")
+            try:
+                self.ui_call(self.lower)
+                time.sleep(0.3)
+                if not self.check_and_focus_game():
+                    self.log("[F2] 未能聚焦游戏。")
+                    return
+                time.sleep(0.3)
+                tag = self.selected_card_has_new_tag()
+                is_target = self.selected_car_is_target()
+                pconf = self.gift_panel_conf()
+                self.log(f"[F2] 当前选中卡：全新={tag} 目标车={is_target}(panel={pconf:.2f})")
+                if tag:
+                    self.log("[F2] 有全新标记 → 跳过，不送出。")
+                    return
+                if not is_target:
+                    self.log("[F2] 非目标车款 → 跳过，不送出（防误送）。")
+                    return
+                self.log("[F2] 符合条件，执行真实送出...")
+                result = self.gift_current_car()
+                self.log(f"[F2] 送出结果：{result}")
+            except Exception as e:
+                self.log(f"[F2] 异常: {e}")
+            finally:
+                self.is_running = False
+                self.is_paused = False
+                self.update_running_state("idle")
+                self.ui_call(self.lift)
         threading.Thread(target=work, daemon=True).start()
 
     def recognize_largerange(self):
