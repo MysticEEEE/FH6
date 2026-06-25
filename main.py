@@ -3060,13 +3060,24 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         ]
         try:
             x, y, w, h = self.regions["全界面"]
+            # 关键：数值小图是按 2560 基准裁的，窗口变小时屏上数字也变小，
+            # 必须按自适应校准的缩放比把模板同步缩小，否则匹配骤降（窗口尺寸一变 panel 就失效）。
+            scale = 1.0
+            try:
+                if hasattr(self, "match_calibration"):
+                    scale = float(self.match_calibration.get("preferred_scale", 1.0) or 1.0)
+            except Exception:
+                scale = 1.0
             confs = []
             for tpl_path, (rx, ry, rw, rh) in fields:
                 m = 30  # 搜索边距（容忍面板位置在不同截图间的轻微抖动）
                 reg = (x + int(w * rx) - m, y + int(h * ry) - m,
                        int(w * rw) + 2 * m, int(h * rh) + 2 * m)
                 g = cv2.cvtColor(self.capture_region(reg), cv2.COLOR_BGR2GRAY)
-                confs.append(self.match_template_score(g, self.load_template_gray(tpl_path)))
+                tpl = self.load_template_gray(tpl_path)
+                if tpl is not None and abs(scale - 1.0) > 0.01:
+                    tpl = cv2.resize(tpl, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                confs.append(self.match_template_score(g, tpl))
             return min(confs) if confs else -1.0
         except Exception:
             return -1.0
@@ -3476,9 +3487,19 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.hw_press("enter")      # 确认该对话框默认项，进入下一个
             time.sleep(0.4)
 
-        # 等「礼物已送出」成功提示（含转圈 1-3 秒）
+        # 等「礼物已送出」成功提示（含「正在送出礼物」转圈，可能数秒）
         if not self.wait_for_image_gray("giftbox/sent.png", region=self.regions["全界面"],
-                                        threshold=0.7, timeout=10, interval=0.25, fast_mode=True):
+                                        threshold=0.7, timeout=15, interval=0.25, fast_mode=True):
+            # 兜底：转圈横幅短暂、可能错过。若「您的礼物」确认框已消失且已回到网格(有选中卡高亮)，
+            # 说明赠送已完成，判定送出成功（防止把已成功的送出误记为失败）。
+            confirm_gone = not self.find_image_gray("giftbox/confirm.png", region=self.regions["全界面"],
+                                                    threshold=0.7, fast_mode=True)
+            back_to_grid = self.find_selected_card_region() is not None
+            if confirm_gone and back_to_grid:
+                self.log("[Gift] 未直接捕获「礼物已送出」，但确认框已消失且已回到网格 → 判定送出成功。")
+                snap("done_sent_inferred")
+                time.sleep(0.5)
+                return "sent"
             self.log("[Gift] 未出现「礼物已送出」，按失败处理。")
             snap("fail_no_sent")
             self.hw_press("esc")
@@ -3660,18 +3681,33 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         """转盘动画期间按 enter 跳过（动画不涉及车辆，enter 安全），直到奖励结果界面就位。
         关键：一旦检测到结果界面（respin 提示）立即停手，绝不再多按 enter，
         以免误把「领取并再抽」走成 enter（结果界面 enter=领取，若紧跟已拥有对话框会落到选项1）。"""
-        for _ in range(8):
+        # 流程：转盘旋转(左下「跳过 Enter」) → 按一次 Enter 跳过 → 约 3-4 秒闪光+画面稳定 →
+        # 结果界面(左下「Enter 领取并再抽」/「Esc 领取」, 即 respin.png)。
+        # 铁律：一旦结果界面出现就立刻停手，绝不再按 Enter——那里 Enter=再抽，多按就是过抽/误入库。
+        for attempt in range(3):
             if not self.is_running:
                 return False
             self.check_pause()
+            # 已是结果界面 → 立刻返回，不再按键
             if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True):
                 return True
-            # 已退回菜单（极端：上一抽就是最后一抽）则不再按
             if self.is_wheelspin_finished():
                 return False
+            # 仍在转盘旋转 → 只按一次 Enter 请求跳过
             self.hw_press("enter")
-            time.sleep(0.7)
+            # 闪光难判，用时间：跳过后约 3-4 秒画面稳定。其间【只轮询结果界面，绝不再按键】。
+            deadline = time.time() + 5.0
+            while time.time() < deadline:
+                if not self.is_running:
+                    return False
+                self.check_pause()
+                if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                        threshold=0.7, fast_mode=True):
+                    return True
+                if self.is_wheelspin_finished():
+                    return False
+                time.sleep(0.4)
         return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True) is not None
 
