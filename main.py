@@ -2509,13 +2509,22 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             pos_target = self.wait_for_new_consumable_car_strict(timeout=1.5, interval=0.2)
 
             if pos_target:
-                self.game_click(pos_target)
+                self.game_click(pos_target)   # 点击=只高亮选中（再点/Enter 才上车）
+                time.sleep(0.6)
+                # 选中卡校验（复用送车方案的左侧面板目标车判定）：高亮后、上车前确认是目标车款，防误选
+                if not self.selected_car_is_target():
+                    self.log("[CJ] 选中卡左侧面板≠目标车款，判误选，跳过继续查找。")
+                    for _ in range(4):
+                        self.hw_press("right", delay=0.06)
+                        time.sleep(0.1)
+                    current_page += 1
+                    continue
                 found_car = True
                 if smart_page_enabled:
                     self.memory_car_page = current_page
                     self.log(f"锁定目标车辆！已记录当前页码: {current_page}")
                 else:
-                    self.log("锁定目标车辆！")
+                    self.log("锁定目标车辆（面板校验通过）！")
                 break
 
             for _ in range(4):
