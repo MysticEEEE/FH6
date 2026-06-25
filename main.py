@@ -58,6 +58,7 @@ import threading
 
 from image_matcher import ImageMatcherMixin
 from gift_logic import should_stop_gifting, gift_default_config
+from wheelspin_logic import should_stop_wheelspin, wheelspin_default_config
 
 from app_resources import (
     APP_DIR,
@@ -419,6 +420,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "ai_model_path": "models/fh6_car_select_yolo.pt"
         }
         self.config.update(gift_default_config())
+        self.config.update(wheelspin_default_config())
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json，并与底本合并（自动补全缺失项）
         if os.path.exists(ext_path):
@@ -471,6 +473,13 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.config["smart_page"] = self.var_smart_page.get()
         if hasattr(self, "le_restart_cmd"):
             self.config["restart_cmd"] = self.le_restart_cmd.get().strip()
+        if hasattr(self, "opt_wheelspin_mode"):
+            self.config["wheelspin_mode"] = self.opt_wheelspin_mode.get()
+        if hasattr(self, "entry_wheelspin_max"):
+            try:
+                self.config["wheelspin_max_count"] = max(0, int(self.entry_wheelspin_max.get()))
+            except Exception:
+                pass
         try:
             with open(USER_CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
@@ -3308,6 +3317,217 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                     break
 
         self.log(f"[Gift] 送车流程结束，共送出 {gifted} 辆。")
+        return True
+
+    # ==========================================
+    # --- 模块：自动抽奖 ---
+    # ==========================================
+    def start_wheelspin_pipeline(self):
+        """GUI「自动抽奖」按钮入口。镜像 start_gift_pipeline。"""
+        if self.is_running:
+            self.log("已有任务正在运行，无法启动抽奖。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self.save_config()
+        self.reset_run_stats()
+        self.update_running_state("running")
+        self.update_running_ui("自动抽奖", 0, 0)
+        self.update_timer()
+        mode = self.config.get("wheelspin_mode", "抽奖")
+        self.log(f"====== 开始自动抽奖（模式：{mode}） ======")
+
+        def runner():
+            try:
+                if not self.check_and_focus_game():
+                    self.log("未能聚焦游戏窗口，抽奖结束。")
+                    return
+                self.logic_auto_wheelspin()
+            except Exception as e:
+                self.log(f"抽奖流程异常: {e}")
+            finally:
+                self.stop_all()
+
+        self.current_thread = threading.Thread(target=runner, daemon=True)
+        self.current_thread.start()
+
+    def navigate_to_wheelspin(self):
+        """复用现有导航：enter_menu → pagedown 切到「我的地平线」标签页 → 点击「抽奖/超级抽奖」入口。
+        送车流程 pagedown×1 到「车辆」页；本流程再多一格到「我的地平线」页（截图14）。
+        用 wheelspin/menu_anchor.png（「我的地平线」高亮标签）确认到位。成功返回 True。"""
+        mode = self.config.get("wheelspin_mode", "抽奖")
+        entry_tpl = ("wheelspin/entry_super.png" if mode == "超级抽奖"
+                     else "wheelspin/entry_wheelspin.png")
+        self.log(f"[Wheelspin] 准备进入主菜单...（模式：{mode}）")
+        if not self.enter_menu():
+            self.log("[Wheelspin] 进入主菜单失败。")
+            return False
+
+        # 从「剧情」标签向右移动到「我的地平线」标签（pagedown 每次右移一个标签，与送车一致）。
+        self.log("[Wheelspin] 切换到「我的地平线」标签页...")
+        self.check_pause()
+        self.hw_press("pagedown", delay=0.15)
+        time.sleep(0.6)
+        self.hw_press("pagedown", delay=0.15)
+        time.sleep(1.0)
+
+        # 识别驱动：确认「我的地平线」菜单锚点到位；未到位再右移一格重试（最多 4 次）。
+        found = False
+        for attempt in range(4):
+            if not self.is_running:
+                return False
+            self.check_pause()
+            if self.wait_for_image_gray(
+                    "wheelspin/menu_anchor.png", region=self.regions["全界面"],
+                    threshold=0.7, timeout=3, interval=0.25, fast_mode=False):
+                found = True
+                break
+            self.log(f"[Wheelspin] 未锚定到「我的地平线」，再右移一格重试...({attempt + 1}/4)")
+            self.hw_press("pagedown", delay=0.15)
+            time.sleep(0.8)
+        if not found:
+            self.log("[Wheelspin] 未能定位「我的地平线」菜单页。")
+            return False
+
+        # 点击对应抽奖入口（用彩色匹配，借助底色区分青色超抽 / 绿色抽奖）。
+        self.check_pause()
+        pos_entry = self.wait_for_image(
+            entry_tpl, region=self.regions["全界面"],
+            threshold=0.72, timeout=6, interval=0.3, fast_mode=False)
+        if not pos_entry:
+            self.log(f"[Wheelspin] 未找到「{mode}」入口图块。")
+            return False
+        self.game_click(pos_entry)
+        time.sleep(1.8)
+        self.log(f"[Wheelspin] 已点击「{mode}」入口，进入抽奖。")
+        return True
+
+    def is_wheelspin_finished(self):
+        """是否已退回「我的地平线」菜单（确定性结束信号：次数用尽会自动返回截图14菜单）。"""
+        return self.find_image_gray(
+            "wheelspin/menu_anchor.png", region=self.regions["全界面"],
+            threshold=0.7, fast_mode=False) is not None
+
+    def skip_wheelspin_animation(self):
+        """转盘动画期间按 enter 跳过（动画不涉及车辆，enter 安全），直到奖励结果界面就位。
+        关键：一旦检测到结果界面（respin 提示）立即停手，绝不再多按 enter，
+        以免误把「领取并再抽」走成 enter（结果界面 enter=领取，若紧跟已拥有对话框会落到选项1）。"""
+        for _ in range(8):
+            if not self.is_running:
+                return False
+            self.check_pause()
+            if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True):
+                return True
+            # 已退回菜单（极端：上一抽就是最后一抽）则不再按
+            if self.is_wheelspin_finished():
+                return False
+            self.hw_press("enter")
+            time.sleep(0.7)
+        return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True) is not None
+
+    def collect_and_respin(self):
+        """领取奖励并再抽：优先鼠标点击左下角「领取奖励并再次抽奖」按钮（首次定位后缓存坐标），
+        避免连发 enter 在已拥有对话框出现时误触选项1。定位失败时仅在确认无对话框后回退按 enter。"""
+        pos = getattr(self, "_wheelspin_respin_pos", None)
+        if pos is None:
+            pos = self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                       threshold=0.7, fast_mode=False)
+            if pos:
+                self._wheelspin_respin_pos = pos
+        if pos:
+            self.game_click(pos)
+            time.sleep(1.0)
+            return True
+        # 回退：仅在确认当前【没有】已拥有对话框时才盲按 enter（防误加入库）
+        if not self.find_image_gray("wheelspin/owned.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True):
+            self.log("[Wheelspin] 未定位领取按钮，回退按 enter 领取。")
+            self.hw_press("enter")
+            time.sleep(1.0)
+        return False
+
+    def handle_owned_car_dialog(self):
+        """检测「已拥有车辆」对话框并卖出重复车。超抽一次最多 3 车，可能连续弹多个对话框，
+        故循环处理直到检测不到为止。返回处理过的对话框数量。
+
+        安全闸门：仅在【确实检测到】对话框时才用方向键+enter，绝不盲按。
+        从默认高亮项按 wheelspin_owned_downs 次「下」到「出售」，再 enter 卖出。"""
+        downs = int(self.config.get("wheelspin_owned_downs", 2))
+        handled = 0
+        for _ in range(4):  # 安全上限：最多连续处理 4 个对话框
+            if not self.is_running:
+                break
+            self.check_pause()
+            if not self.wait_for_image_gray(
+                    "wheelspin/owned.png", region=self.regions["全界面"],
+                    threshold=0.7, timeout=2.0, interval=0.2, fast_mode=True):
+                break
+            self.log("[Wheelspin] 检测到「已拥有车辆」→ 选择「出售」卖出重复车。")
+            for _ in range(downs):
+                self.hw_press("down", delay=0.12)
+                time.sleep(0.25)
+            self.hw_press("enter", delay=0.12)
+            time.sleep(1.0)
+            handled += 1
+        if handled:
+            self.log(f"[Wheelspin] 已处理 {handled} 个「已拥有车辆」对话框。")
+        return handled
+
+    def logic_auto_wheelspin(self):
+        """自动抽奖主流程：连续抽奖，抽到已拥有重复车自动出售，直到退回菜单或达次数上限。"""
+        try:
+            max_count = int(self.config.get("wheelspin_max_count", 0))
+        except Exception:
+            max_count = 0
+
+        if not self.navigate_to_wheelspin():
+            return False
+
+        self._wheelspin_respin_pos = None  # 「领取并再抽」按钮坐标缓存
+        spins = 0
+        no_result_streak = 0
+        self.update_running_ui("自动抽奖", spins, max_count or 0)
+
+        while self.is_running:
+            self.check_pause()
+
+            # 停止判断（确定性退回菜单 > 次数上限安全阀）
+            returned = self.is_wheelspin_finished()
+            stop, reason = should_stop_wheelspin(
+                returned_to_menu=returned, spin_count=spins, max_count=max_count)
+            if stop:
+                self.log(f"[Wheelspin] 停止：{reason}")
+                break
+
+            # 1. 跳过转盘动画 → 等结果界面
+            self.skip_wheelspin_animation()
+
+            # 2. 确认奖励结果界面就位
+            if not self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+                                        threshold=0.7, fast_mode=True):
+                if self.is_wheelspin_finished():
+                    self.log("[Wheelspin] 已退回菜单，抽奖结束。")
+                    break
+                no_result_streak += 1
+                if no_result_streak >= 3:
+                    self.log("[Wheelspin] 连续多次未出现奖励结果界面，停止以防异常。")
+                    break
+                time.sleep(0.6)
+                continue
+            no_result_streak = 0
+
+            # 3. 领取并再抽（鼠标点击按钮）
+            self.collect_and_respin()
+            spins += 1
+            self.update_running_ui("自动抽奖", spins, max_count or 0)
+            self.log(f"[Wheelspin] 已完成第 {spins} 抽。")
+
+            # 4. 处理「已拥有车辆」对话框（可能连续多张）
+            self.handle_owned_car_dialog()
+
+        self.log(f"[Wheelspin] 抽奖流程结束，共抽 {spins} 次。")
         return True
 
 if __name__ == "__main__":
