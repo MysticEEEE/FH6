@@ -271,6 +271,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.last_focus_check_at = 0.0
         self.focus_recovering = False
 
+        self.init_match_calibration()
         self.init_regions()
 
         # 【优化加载速度】：将IO提取与图像缓存的加载/生成放到后台线程，避免阻塞主界面启动
@@ -388,6 +389,211 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 int(h * 0.42),
             ),
         }
+
+    # ==========================================
+    # --- 自适应缩放校准（移植自上游，仅追加，不改动现有逻辑） ---
+    # ==========================================
+    def init_match_calibration(self):
+        self.match_calibration = {
+            "state": "idle",
+            "status": "未校准",
+            "detail": "等待游戏窗口",
+            "preferred_scale": 1.0,
+            "gray_threshold_offset": 0.0,
+            "edge_bias": 0.0,
+            "sharpness": 0.0,
+            "brightness": 0.0,
+            "anchor": "",
+            "anchor_score": 0.0,
+            "window_signature": None,
+            "updated_at": 0.0,
+        }
+
+    def update_match_calibration_ui(self):
+        calib = getattr(self, "match_calibration", {})
+        state = calib.get("state", "idle")
+        status = calib.get("status", "未校准")
+        detail = calib.get("detail", "等待游戏窗口")
+        color_map = {
+            "idle": "#D29922",
+            "running": "#D29922",
+            "ready": "#238636",
+            "fallback": "#9A6700",
+            "error": "#DA3633",
+        }
+        color = color_map.get(state, "#D29922")
+
+        def apply_ui():
+            try:
+                if hasattr(self, "lbl_calibration_status"):
+                    self.lbl_calibration_status.configure(text=status, text_color=color)
+                if hasattr(self, "lbl_calibration_detail"):
+                    self.lbl_calibration_detail.configure(text=detail)
+            except Exception:
+                pass
+
+        try:
+            self.ui_call(apply_ui)
+        except Exception:
+            pass
+
+    def set_match_calibration_state(self, state, status, detail):
+        if not hasattr(self, "match_calibration"):
+            self.init_match_calibration()
+        self.match_calibration["state"] = state
+        self.match_calibration["status"] = status
+        self.match_calibration["detail"] = detail
+        self.update_match_calibration_ui()
+
+    def calibrate_match_profile(self, force=False):
+        if not hasattr(self, "match_calibration"):
+            self.init_match_calibration()
+        region = self.regions.get("全界面")
+        if not region:
+            self.set_match_calibration_state("error", "校准失败", "未获取到游戏窗口区域")
+            return False
+
+        window_signature = (int(region[2]), int(region[3]))
+        prev_sig = self.match_calibration.get("window_signature")
+        prev_time = float(self.match_calibration.get("updated_at", 0.0) or 0.0)
+        if not force and prev_sig == window_signature and (time.time() - prev_time) < 20:
+            self.update_match_calibration_ui()
+            return True
+
+        self.set_match_calibration_state("running", "校准中", f"窗口 {window_signature[0]}x{window_signature[1]}，正在分析模板缩放与清晰度")
+        self.log(f"[Calibration] 开始自适应校准，窗口 {window_signature[0]}x{window_signature[1]}")
+
+        try:
+            screen_bgr = self.capture_region(region)
+            screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+            sharpness = float(cv2.Laplacian(screen_gray, cv2.CV_64F).var())
+            brightness = float(screen_gray.mean())
+            curr_w = float(window_signature[0])
+
+            # 我们的模板是按 2560 截的，锚点也存在于 images/ 根目录。
+            anchors = [
+                "collectionjournal.png",
+                "eventlab.png",
+                "continue-b.png",
+                "continue-w.png",
+                "horizon6.png",
+                "buyandsell-w.png",
+                "designpaint-w.png",
+                "choosecar.png",
+                "rc.png",
+            ]
+            scale_candidates = []
+            for s in [
+                1.0,
+                curr_w / 1600.0,
+                curr_w / 1920.0,
+                curr_w / 2560.0,
+                0.995,
+                1.005,
+                0.99,
+                1.01,
+                0.985,
+                1.015,
+                0.97,
+                1.03,
+                0.95,
+                1.05,
+            ]:
+                s = round(float(s), 3)
+                if 0.45 <= s <= 1.8 and s not in scale_candidates:
+                    scale_candidates.append(s)
+            best = None
+
+            for template_name in anchors:
+                tpl_gray_raw = self.load_template_gray(template_name)
+                if tpl_gray_raw is None:
+                    continue
+
+                for scale in scale_candidates:
+                    tpl_gray = tpl_gray_raw
+                    if scale != 1.0:
+                        tpl_gray = cv2.resize(tpl_gray_raw, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+
+                    th, tw = tpl_gray.shape[:2]
+                    if th < 5 or tw < 5 or th > screen_gray.shape[0] or tw > screen_gray.shape[1]:
+                        continue
+
+                    res = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
+                    _, score, _, _ = cv2.minMaxLoc(res)
+                    if best is None or score > best["score"]:
+                        best = {
+                            "template": template_name,
+                            "scale": float(scale),
+                            "score": float(score),
+                        }
+
+            preferred_scale = 1.0
+            anchor_name = "none"
+            anchor_score = 0.0
+            state = "fallback"
+            status = "兜底模式"
+
+            if best:
+                anchor_name = best["template"]
+                anchor_score = best["score"]
+                if anchor_score >= 0.58:
+                    preferred_scale = best["scale"]
+                    state = "ready"
+                    status = "已校准"
+
+            gray_threshold_offset = 0.0
+            if sharpness < 120:
+                gray_threshold_offset -= 0.06
+            elif sharpness < 180:
+                gray_threshold_offset -= 0.04
+            elif sharpness < 260:
+                gray_threshold_offset -= 0.02
+
+            if anchor_score < 0.62:
+                gray_threshold_offset -= 0.02
+
+            gray_threshold_offset = max(-0.08, min(0.02, gray_threshold_offset))
+            edge_bias = 1.0 if (sharpness < 140 or brightness < 55 or brightness > 210) else 0.0
+
+            detail = (
+                f"scale={preferred_scale:.3f} | threshold={gray_threshold_offset:+.02f} | "
+                f"sharp={sharpness:.0f} | anchor={anchor_name} {anchor_score:.2f}"
+            )
+
+            self.match_calibration.update({
+                "state": state,
+                "status": status,
+                "detail": detail,
+                "preferred_scale": preferred_scale,
+                "gray_threshold_offset": gray_threshold_offset,
+                "edge_bias": edge_bias,
+                "sharpness": sharpness,
+                "brightness": brightness,
+                "anchor": anchor_name,
+                "anchor_score": anchor_score,
+                "window_signature": window_signature,
+                "updated_at": time.time(),
+            })
+            self.update_match_calibration_ui()
+            self.log(
+                f"[Calibration] {status}: scale={preferred_scale:.3f}, threshold={gray_threshold_offset:+.02f}, "
+                f"sharp={sharpness:.0f}, brightness={brightness:.0f}, anchor={anchor_name}, score={anchor_score:.3f}"
+            )
+            return True
+        except Exception as e:
+            self.match_calibration.update({
+                "state": "error",
+                "status": "校准失败",
+                "detail": f"使用默认参数继续: {e}",
+                "preferred_scale": 1.0,
+                "gray_threshold_offset": 0.0,
+                "edge_bias": 0.0,
+                "window_signature": window_signature,
+                "updated_at": time.time(),
+            })
+            self.update_match_calibration_ui()
+            self.log(f"[Calibration] 校准失败，已回退默认参数: {e}")
+            return False
 
     # ==========================================
     # --- 配置管理 ---
@@ -1583,6 +1789,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                         return False
                     # ====================================================
                     self.update_regions_by_window(gx, gy, gw, gh)
+
+                    # 窗口区域更新后，进行一次自适应缩放校准（带去抖，不影响正常流程）。
+                    try:
+                        self.calibrate_match_profile()
+                    except Exception as _calib_e:
+                        self.log(f"[Calibration] 调用异常（已忽略）: {_calib_e}")
 
                     # 2. 获取该窗口所在的物理显示器边界
                     MONITOR_DEFAULTTONEAREST = 2

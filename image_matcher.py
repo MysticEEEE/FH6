@@ -212,6 +212,12 @@ class ImageMatcherMixin:
             s = round(float(s), 3)
             if 0.45 <= s <= 1.8 and s not in scales:
                 scales.append(s)
+        # 最优先：自适应校准得到的 preferred_scale（若已校准），让正确缩放第一个命中。
+        calib = getattr(self, "match_calibration", {}) or {}
+        preferred_scale = float(calib.get("preferred_scale", 1.0) or 1.0)
+        add_scale(preferred_scale)
+        add_scale(preferred_scale * 0.99)
+        add_scale(preferred_scale * 1.01)
         # 先加“最可能正确”的比例及其微调
         add_scale(primary_scale)
         add_scale(primary_scale * 0.98)
