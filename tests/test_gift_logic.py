@@ -41,7 +41,7 @@ class TestShouldStopGifting(unittest.TestCase):
 
 class TestDefaultConfig(unittest.TestCase):
     def test_defaults(self):
-        self.assertEqual(gift_default_config(), {"gift_max_count": 200})
+        self.assertEqual(gift_default_config(), {"gift_max_count": 0, "chk_gift": False})
 
 
 if __name__ == "__main__":
