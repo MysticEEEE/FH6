@@ -372,11 +372,13 @@ def setup_ui(bot):
     bot.opt_wheelspin_mode.set(bot.config.get("wheelspin_mode", "抽奖"))
     bot.opt_wheelspin_mode.pack(side="right", padx=(0, 8), pady=14)
 
-    bot.btn_runtime_gift_test = button(
-        bot.runtime_frame, "送车测试", bot.start_gift_test,
-        color="#5A6473", hover="#6B7585", width=92, height=34,
-    )
-    bot.btn_runtime_gift_test.pack(side="right", padx=(0, 8), pady=14)
+    # 「送车测试」为调试功能：仅 manualDebug（注入了 start_gift_test）启动时显示
+    if hasattr(bot, "start_gift_test"):
+        bot.btn_runtime_gift_test = button(
+            bot.runtime_frame, "送车测试", bot.start_gift_test,
+            color="#5A6473", hover="#6B7585", width=92, height=34,
+        )
+        bot.btn_runtime_gift_test.pack(side="right", padx=(0, 8), pady=14)
 
     bot.btn_runtime_pause = button(
         bot.runtime_frame,

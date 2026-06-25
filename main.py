@@ -234,6 +234,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             pass
 
         self.is_running = False
+        # 调试模式：纯净 main.py 启动为 False（无测试键位/落盘/序列存图）；
+        # tools/manualDebug.py 子类在 super().__init__() 前置 True 注入调试功能。
+        self.debug_mode = getattr(self, "debug_mode", False)
         self.current_thread = None
         self.is_paused = False  # <--- 【新增】全局暂停状态
 
@@ -963,14 +966,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         curr_time = time.strftime("%H:%M:%S")
         full_msg = f"[{curr_time}] {message}"
 
-        # 同步写一份到 debug/gui_log.txt（复用 run_with_file_log 的写法），方便外部读取调试
-        try:
-            log_path = os.path.join(get_app_dir(), "debug", "gui_log.txt")
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write(full_msg + "\n")
-        except Exception:
-            pass
+        # 仅调试模式(manualDebug 启动)同步写一份到 debug/gui_log.txt，方便外部读取调试
+        if getattr(self, "debug_mode", False):
+            try:
+                log_path = os.path.join(get_app_dir(), "debug", "gui_log.txt")
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(full_msg + "\n")
+            except Exception:
+                pass
 
         def write_ui():
             try:
@@ -1676,25 +1680,25 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def start_hotkey_listener(self):
         def hotkey_thread():
             def on_press(k):
-                if k == keyboard.Key.f8:
+                if k == keyboard.Key.f8:        # 停止
                     self.stop_all()
-                elif k == keyboard.Key.f2:  # <--- 【新增】F2 单车送车测试
-                    self.gift_one_card_test()
-                elif k == keyboard.Key.f9:  # <--- 【新增】F9 快捷键
+                elif k == keyboard.Key.f9:      # 暂停/恢复
                     self.toggle_pause()
-                elif k == keyboard.Key.f3:  # <--- 【新增】F3 测试找图
-                    self.start_test_find_image()
-                elif k == keyboard.Key.f4:  # <--- 【新增】F4 单张识别当前选中卡
-                    self.recognize_current_card()
-                elif k == keyboard.Key.f5:  # <--- 【新增】F5 大范围识别（专精同款）
-                    self.recognize_largerange()
-                elif k == keyboard.Key.f6:  # <--- 【新增】F6 存当前完整截图
-                    self.capture_full_debug()
+                else:
+                    # 其余键交给调试钩子：纯净版无操作；manualDebug 子类重写以注入 F2/F4/F5/F6/F7 等
+                    try:
+                        self.on_debug_hotkey(k)
+                    except Exception as e:
+                        self.log(f"调试热键处理异常: {e}")
 
             with keyboard.Listener(on_press=on_press) as listener:
                 listener.join()
 
         threading.Thread(target=hotkey_thread, daemon=True).start()
+
+    def on_debug_hotkey(self, k):
+        """基类无调试热键；manualDebug 子类重写以注入 F2/F4/F5/F6/F7 等测试键。"""
+        pass
 
 
     # ==========================================
@@ -3030,43 +3034,6 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.current_thread = threading.Thread(target=runner, daemon=True)
         self.current_thread.start()
 
-    def gift_load_yolo(self):
-        """加载 YOLO 模型（无视 ai_assist 开关，调试/识别用），失败返回 None。"""
-        m = self.get_yolo_car_select_model()
-        if m is not None:
-            return m
-        try:
-            path = self.resolve_ai_model_path()
-            if not path:
-                return None
-            from ultralytics import YOLO
-            return YOLO(path)
-        except Exception as e:
-            self.log(f"[识别] YOLO 加载失败: {e}")
-            return None
-
-    def gift_ai_counts(self, region, model):
-        """在 region 上跑 YOLO，返回 (counts{new,b600,car}, 最大new置信度) 或 None。"""
-        if model is None:
-            return None
-        try:
-            bgr = self.capture_region(region)
-            res = model.predict(source=bgr, imgsz=int(self.config.get("ai_imgsz", 960)),
-                                conf=0.10, device=self.resolve_ai_device(), verbose=False)[0]
-            counts = {"new": 0, "b600": 0, "car": 0}
-            mx = 0.0
-            if res.boxes is not None:
-                for item in res.boxes:
-                    b = self.yolo_box_to_dict(item, conf_threshold=0.0)
-                    if b and b["name"] in counts:
-                        counts[b["name"]] += 1
-                        if b["name"] == "new":
-                            mx = max(mx, b["conf"])
-            return counts, mx
-        except Exception as e:
-            self.log(f"[识别] AI 推理异常: {e}")
-            return None
-
     def gift_panel_conf(self):
         """目标车款匹配置信度 = 左侧面板各数值字段（马力/车重/排气量）匹配的【最小值】。
         取最弱字段最稳健：不同车至少有一个数值对不上。整块匹配会被通用标签(马力/扭矩...)主导，
@@ -3116,231 +3083,6 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             return min(confs) if confs else -1.0
         except Exception:
             return -1.0
-
-    def recognize_current_card(self):
-        """F4：单张识别当前选中卡（模板全新 + 目标车款 + AI），输出日志并存图。只读不动作。
-        送车/专精选车界面通用——导航到任一界面按 F4 即可看当前选中卡的识别情况。"""
-        def work():
-            # 关键：识别函数（selected_card_has_new_tag / find_image_gray）会在
-            # not is_running 时直接短路返回，所以 F4 期间临时置 True，结束恢复。
-            prev_running = self.is_running
-            self.is_running = True
-            try:
-                # F4 是全局热键，GUI 可能在前面遮挡游戏（整屏截图会抓进来）。
-                # 先把 GUI 压到最底再聚焦游戏，确保截到的是干净的游戏画面。
-                self.ui_call(self.lower)
-                time.sleep(0.3)
-                self.check_and_focus_game()
-                time.sleep(0.3)
-                region = self.find_selected_card_region()
-                hl = "高亮" if region is not None else "回退固定框"
-                if region is None:
-                    region = self.selected_card_region()
-                debug_dir = os.path.join(get_app_dir(), "debug", "gift_test")
-                stamp = time.strftime("%H%M%S")
-                fname = f"f4_{stamp}.png"
-                self.write_debug_image(os.path.join(debug_dir, fname), self.capture_region(region))
-                tag = self.selected_card_has_new_tag()
-                is_target = self.selected_car_is_target()
-                pconf = self.gift_panel_conf()
-                ai = self.gift_ai_counts(region, self.gift_load_yolo())
-                ai_str = "AI=跳过"
-                if ai is not None:
-                    c, mx = ai
-                    ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
-                self.log(f"[F4] ({hl}) 全新={tag} 目标车={is_target}(panel={pconf:.2f}) "
-                         f"{ai_str} -> 已存 debug/gift_test/{fname}")
-            except Exception as e:
-                self.log(f"[F4] 识别异常: {e}")
-            finally:
-                self.is_running = prev_running
-                self.ui_call(self.lift)   # 恢复 GUI 到前面，方便看日志
-        threading.Thread(target=work, daemon=True).start()
-
-    def gift_one_card_test(self):
-        """F2：单车送车测试——对当前选中卡走真实送车决策：
-        全新标记→跳过不送；非目标车→跳过不送；否则真实送出（gift_current_car）。
-        手动选好车辆卡片后按 F2 触发。检测期间下沉 GUI 避免遮挡。"""
-        # 同步守卫：on_press 串行，置位放线程外可挡住热键连发导致的双重送车
-        if self.is_running:
-            self.log("[F2] 已有任务运行中，忽略。")
-            return
-        self.is_running = True
-        self.is_paused = False
-        self.update_running_state("running")
-
-        def work():
-            try:
-                self.ui_call(self.lower)
-                time.sleep(0.3)
-                if not self.check_and_focus_game():
-                    self.log("[F2] 未能聚焦游戏。")
-                    return
-                time.sleep(0.3)
-                tag = self.selected_card_has_new_tag()
-                is_target = self.selected_car_is_target()
-                pconf = self.gift_panel_conf()
-                self.log(f"[F2] 当前选中卡：全新={tag} 目标车={is_target}(panel={pconf:.2f})")
-                if tag:
-                    self.log("[F2] 有全新标记 → 跳过，不送出。")
-                    return
-                if not is_target:
-                    self.log("[F2] 非目标车款 → 跳过，不送出（防误送）。")
-                    return
-                self.log("[F2] 符合条件，执行真实送出...")
-                result = self.gift_current_car()
-                self.log(f"[F2] 送出结果：{result}")
-            except Exception as e:
-                self.log(f"[F2] 异常: {e}")
-            finally:
-                self.is_running = False
-                self.is_paused = False
-                self.update_running_state("idle")
-                self.ui_call(self.lift)
-        threading.Thread(target=work, daemon=True).start()
-
-    def recognize_largerange(self):
-        """F5：专精加点同款【大范围】识别——在整个选车界面扫描全新消耗车
-        （find_new_consumable_car_strict），标注命中位置存图，只读不点击。
-        用于测专精选车界面的识别（它不是按选中框、而是全屏找全新车）。"""
-        def work():
-            prev_running = self.is_running
-            self.is_running = True
-            try:
-                self.ui_call(self.lower)
-                time.sleep(0.3)
-                self.check_and_focus_game()
-                time.sleep(0.3)
-                region = self.regions["全界面"]
-                full = self.capture_region(region)
-                # 用和正常流程同款的检测器：按 AI 设置走 AI(ai_only/ai_prefer)，否则模板
-                pos = self.wait_for_new_consumable_car_strict(timeout=2.0, interval=0.2)
-                pconf = self.gift_panel_conf()
-                ai = self.gift_ai_counts(region, self.gift_load_yolo())
-                annotated = full.copy()
-                if pos:
-                    px, py = int(pos[0] - region[0]), int(pos[1] - region[1])
-                    cv2.circle(annotated, (px, py), 45, (0, 0, 255), 5)
-                debug_dir = os.path.join(get_app_dir(), "debug", "skill_test")
-                stamp = time.strftime("%H%M%S")
-                fname = f"f5_{stamp}.png"
-                self.write_debug_image(os.path.join(debug_dir, fname), annotated)
-                ai_str = "AI=跳过"
-                if ai is not None:
-                    c, mx = ai
-                    ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
-                self.log(f"[F5] 大范围全新车={'命中@'+str([int(v) for v in pos]) if pos else '未找到'} "
-                         f"当前选中卡目标车panel={pconf:.2f}  {ai_str} -> debug/skill_test/{fname}")
-            except Exception as e:
-                self.log(f"[F5] 识别异常: {e}")
-            finally:
-                self.is_running = prev_running
-                self.ui_call(self.lift)
-        threading.Thread(target=work, daemon=True).start()
-
-    def capture_full_debug(self):
-        """F6：存当前游戏完整截图到 debug/screenshots。"""
-        def work():
-            try:
-                self.check_and_focus_game()
-                time.sleep(0.2)
-                img = self.capture_region(self.regions["全界面"])
-                debug_dir = os.path.join(get_app_dir(), "debug", "screenshots")
-                stamp = time.strftime("%Y%m%d_%H%M%S")
-                path = os.path.join(debug_dir, f"full_{stamp}.png")
-                self.write_debug_image(path, img)
-                self.log(f"[F6] 已存完整截图 -> {path}")
-            except Exception as e:
-                self.log(f"[F6] 截图异常: {e}")
-        threading.Thread(target=work, daemon=True).start()
-
-    def start_gift_test(self):
-        """送车干跑测试（F3 思路）：导航 + 重复筛选 + 逐卡检测全新标记并存检测区域图，
-        全程绝不送车。用于实机校准导航/筛选/全新识别与 selected_card_region 区域。"""
-        if self.is_running:
-            self.log("已有任务正在运行，无法启动送车测试。")
-            return
-        self.is_running = True
-        self.is_paused = False
-        self.save_config()
-        self.reset_run_stats()
-        self.update_running_state("running")
-        self.update_running_ui("送车测试", 0, 15)
-        self.ui_call(self.lbl_runtime_loop.configure, text="测试模式")
-        self.update_timer()
-        self.log("====== 开始送车干跑测试（只检测/存图，绝不送车）======")
-
-        # 复用类方法（F4 单张识别同款），避免重复
-        def load_test_yolo():
-            return self.gift_load_yolo()
-
-        def ai_counts_on(region, model):
-            return self.gift_ai_counts(region, model)
-
-        def panel_conf():
-            return self.gift_panel_conf()
-
-        def runner():
-            try:
-                if not self.check_and_focus_game():
-                    self.log("未能聚焦游戏窗口，测试结束。")
-                    return
-                if not self.navigate_to_giftbox():
-                    self.log("[GiftTest] 导航或筛选失败，测试结束。")
-                    return
-                debug_dir = os.path.join(get_app_dir(), "debug", "gift_test")
-                full = self.capture_region(self.regions["全界面"])
-                self.write_debug_image(os.path.join(debug_dir, "00_fullscreen.png"), full)
-                self.log(f"[GiftTest] 已存整屏 -> {debug_dir}\\00_fullscreen.png")
-
-                # AI 基线：YOLO 在整屏礼物界面能识别到什么
-                model = load_test_yolo()
-                full_ai = ai_counts_on(self.regions["全界面"], model)
-                if full_ai is not None:
-                    c, mx = full_ai
-                    self.log(f"[GiftTest] AI整屏基线: new={c['new']} b600={c['b600']} car={c['car']} "
-                             f"最大new置信={mx:.2f}")
-
-                # 先归位到第一辆车，再逐张向右遍历（动态高亮跟踪选中卡）
-                self.go_to_list_start()
-                time.sleep(0.5)
-
-                N = 35
-                self.update_running_ui("送车测试", 0, N)
-                for i in range(N):
-                    if not self.is_running:
-                        break
-                    self.check_pause()
-                    # 动态找【当前选中卡】区域（高亮边框）；失败回退固定框
-                    region = self.find_selected_card_region()
-                    hl = "高亮" if region is not None else "回退固定框"
-                    if region is None:
-                        region = self.selected_card_region()
-                    crop = self.capture_region(region)
-                    self.write_debug_image(
-                        os.path.join(debug_dir, f"card_{i + 1:02d}.png"), crop)
-                    tpl_tag = self.selected_card_has_new_tag()   # 模板检测全新
-                    is_target = self.selected_car_is_target()    # 左侧面板=目标车款?
-                    p_conf = panel_conf()                        # 面板匹配置信(调阈值用)
-                    ai = ai_counts_on(region, model)             # AI 检测
-                    ai_str = "AI=跳过"
-                    if ai is not None:
-                        c, mx = ai
-                        ai_str = f"AI[new={c['new']} b600={c['b600']} car={c['car']} newconf={mx:.2f}]"
-                    self.update_running_ui("送车测试", i + 1, N)
-                    self.log(f"[GiftTest] 卡#{i + 1}({hl}) 全新={tpl_tag} "
-                             f"目标车={is_target}(panel={p_conf:.2f})  {ai_str} "
-                             f"(已存 card_{i + 1:02d}.png)")
-                    self.hw_press("right", delay=0.1)
-                    time.sleep(0.4)
-                self.log(f"[GiftTest] 干跑完成。检测图在 {debug_dir}")
-            except Exception as e:
-                self.log(f"送车测试异常: {e}")
-            finally:
-                self.stop_all()
-
-        self.current_thread = threading.Thread(target=runner, daemon=True)
-        self.current_thread.start()
 
     def navigate_to_giftbox(self):
         """复用现有导航：enter_menu → pagedown → 用 BNandUC 锚定车辆页 → 点礼物箱 → F 筛选「重复项」。
@@ -3483,6 +3225,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         stamp = time.strftime("%H%M%S")
 
         def snap(tag):
+            # 仅调试模式(manualDebug)存逐步序列图；纯净 main 启动不存
+            if not getattr(self, "debug_mode", False):
+                return
             try:
                 self.write_debug_image(os.path.join(seq_dir, f"{stamp}_{tag}.png"),
                                        self.capture_region(self.regions["全界面"]))
