@@ -2873,13 +2873,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         """F2：单车送车测试——对当前选中卡走真实送车决策：
         全新标记→跳过不送；非目标车→跳过不送；否则真实送出（gift_current_car）。
         手动选好车辆卡片后按 F2 触发。检测期间下沉 GUI 避免遮挡。"""
+        # 同步守卫：on_press 串行，置位放线程外可挡住热键连发导致的双重送车
+        if self.is_running:
+            self.log("[F2] 已有任务运行中，忽略。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self.update_running_state("running")
+
         def work():
-            if self.is_running:
-                self.log("[F2] 已有任务运行中，忽略。")
-                return
-            self.is_running = True
-            self.is_paused = False
-            self.update_running_state("running")
             try:
                 self.ui_call(self.lower)
                 time.sleep(0.3)
