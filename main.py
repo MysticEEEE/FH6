@@ -3272,7 +3272,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
         gifted = 0
         no_progress = 0          # 连续"不可送/失败"的张数；送出一辆清零
-        NO_PROGRESS_LIMIT = 150  # 连续这么多张都不可送 → 判定无更多可送车（需实机微调）
+        NO_PROGRESS_LIMIT = 30   # 连续这么多张都不可送 → 判定送完（需 > 最长连续不可送串，可实机微调）
         lost_grid = 0
         self.update_running_ui("自动送车", gifted, max_count or 0)
         self.log(f"[Gift] 开始批量送车（上限={max_count or '不限'}）。")
