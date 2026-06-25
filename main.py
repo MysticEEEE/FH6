@@ -3187,9 +3187,21 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         return True
 
     def gift_current_car(self):
-        """对当前选中卡执行赠送序列。返回 'sent' / 'cannot' / 'fail'。"""
+        """对当前选中卡执行赠送序列。返回 'sent' / 'cannot' / 'fail'。
+        每步存调试截图到 debug/gift_seq/，便于排查卡在哪一画面。"""
+        seq_dir = os.path.join(get_app_dir(), "debug", "gift_seq")
+        stamp = time.strftime("%H%M%S")
+
+        def snap(tag):
+            try:
+                self.write_debug_image(os.path.join(seq_dir, f"{stamp}_{tag}.png"),
+                                       self.capture_region(self.regions["全界面"]))
+            except Exception:
+                pass
+
         self.hw_press("enter")          # 选中卡 → 弹「将礼物赠送给」或「无法送出」
-        time.sleep(0.8)
+        time.sleep(0.9)
+        snap("1_after_select")
 
         # 优先判定「无法送出」（停止主信号）
         if self.find_image_gray("giftbox/cannot.png", region=self.regions["全界面"],
@@ -3203,23 +3215,28 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         if not self.wait_for_image_gray("giftbox/recipient.png", region=self.regions["全界面"],
                                         threshold=0.7, timeout=4, interval=0.2, fast_mode=True):
             self.log("[Gift] 未进入赠送对话框，跳过本卡。")
+            snap("fail_no_recipient")
             self.hw_press("esc")
             time.sleep(0.5)
             return "fail"
+        snap("2_recipient")
 
-        # 默认：任何人 → 话语 → 名称
-        for _ in range(3):
+        # 默认：任何人 → 话语 → 名称（每步存图，便于看时序）
+        for i in range(3):
             self.check_pause()
             self.hw_press("enter")
-            time.sleep(0.7)
+            time.sleep(0.9)
+            snap(f"3_enter{i + 1}")
 
         # 等「礼物已送出」成功提示（含转圈 1-3 秒）
         if not self.wait_for_image_gray("giftbox/sent.png", region=self.regions["全界面"],
-                                        threshold=0.7, timeout=8, interval=0.25, fast_mode=True):
+                                        threshold=0.7, timeout=10, interval=0.25, fast_mode=True):
             self.log("[Gift] 未出现「礼物已送出」，按失败处理。")
+            snap("fail_no_sent")
             self.hw_press("esc")
             time.sleep(0.5)
             return "fail"
+        snap("4_sent")
         self.hw_press("enter")          # 确定 → 回到网格
         time.sleep(1.0)
         return "sent"
