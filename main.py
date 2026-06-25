@@ -2881,7 +2881,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 time.sleep(0.3)
                 region = self.regions["全界面"]
                 full = self.capture_region(region)
-                pos = self.find_new_consumable_car_strict(region=region, save_miss=False)
+                # 用和正常流程同款的检测器：按 AI 设置走 AI(ai_only/ai_prefer)，否则模板
+                pos = self.wait_for_new_consumable_car_strict(timeout=2.0, interval=0.2)
                 pconf = self.gift_panel_conf()
                 ai = self.gift_ai_counts(region, self.gift_load_yolo())
                 annotated = full.copy()
