@@ -3213,22 +3213,26 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             time.sleep(0.6)
             return "cannot"
 
-        # 确认进入赠送序列
-        if not self.wait_for_image_gray("giftbox/recipient.png", region=self.regions["全界面"],
-                                        threshold=0.7, timeout=4, interval=0.2, fast_mode=True):
-            self.log("[Gift] 未进入赠送对话框，跳过本卡。")
-            snap("fail_no_recipient")
-            self.hw_press("esc")
-            time.sleep(0.5)
-            return "fail"
-        snap("2_recipient")
-
-        # 默认：任何人 → 话语 → 名称（每步存图，便于看时序）
-        for i in range(3):
+        # 识别驱动：依次等待 4 个对话框标题出现 → 按 enter 推进（不再固定间隔）
+        # 将礼物赠送给 → 礼物信息 → 送礼人署名 → 您的礼物(赠送礼物确认) → 转圈 → 已送出
+        dialogs = [
+            ("giftbox/recipient.png", "将礼物赠送给"),
+            ("giftbox/msg.png",       "礼物信息"),
+            ("giftbox/sign.png",      "送礼人署名"),
+            ("giftbox/confirm.png",   "您的礼物"),
+        ]
+        for idx, (tpl, name) in enumerate(dialogs, 1):
+            if not self.wait_for_image_gray(tpl, region=self.regions["全界面"],
+                                            threshold=0.7, timeout=6, interval=0.2, fast_mode=True):
+                self.log(f"[Gift] 未出现「{name}」对话框 → 失败。")
+                snap(f"fail_{idx}_{name}")
+                self.hw_press("esc")
+                time.sleep(0.5)
+                return "fail"
+            snap(f"ok_{idx}_{name}")
             self.check_pause()
-            self.hw_press("enter")
-            time.sleep(0.9)
-            snap(f"3_enter{i + 1}")
+            self.hw_press("enter")      # 确认该对话框默认项，进入下一个
+            time.sleep(0.4)
 
         # 等「礼物已送出」成功提示（含转圈 1-3 秒）
         if not self.wait_for_image_gray("giftbox/sent.png", region=self.regions["全界面"],
@@ -3238,7 +3242,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.hw_press("esc")
             time.sleep(0.5)
             return "fail"
-        snap("4_sent")
+        snap("done_sent")
         self.hw_press("enter")          # 确定 → 回到网格
         time.sleep(1.0)
         return "sent"
