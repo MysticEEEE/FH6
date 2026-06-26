@@ -360,8 +360,9 @@ class FH_DebugBot(FH_UltimateBot):
 
             def detect(label):
                 reg = self.regions["全界面"]
-                r = self.find_image_gray("wheelspin/respin.png", region=reg, threshold=0.7, fast_mode=True)
-                s = self.find_image_gray("wheelspin/skip.png", region=reg, threshold=0.7, fast_mode=True)
+                prompt = self._wheelspin_prompt_region()   # skip/respin 只在左下角，限定区更快更准
+                r = self.find_image_gray("wheelspin/respin.png", region=prompt, threshold=0.7, fast_mode=True)
+                s = self.find_image_gray("wheelspin/skip.png", region=prompt, threshold=0.7, fast_mode=True)
                 o = self.find_image_gray("wheelspin/owned.png", region=reg, threshold=0.7, fast_mode=True)
                 m = self.is_wheelspin_finished()
                 self.log(f"[F3] 识别({label}): 结果={'有' if r else '无'} 跳过={'有' if s else '无'} "

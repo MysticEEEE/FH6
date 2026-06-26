@@ -3483,6 +3483,12 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "wheelspin/menu_anchor.png", region=self.regions["全界面"],
             threshold=0.7, fast_mode=False) is not None
 
+    def _wheelspin_prompt_region(self):
+        """抽奖左下角提示区——「Enter 跳过」/「Enter 领取并再抽」总在这一角。
+        把 skip/respin 搜索限定到这里：搜索面积小→更快更跟手，也不被全屏其它内容干扰、过渡帧更易命中。"""
+        x, y, w, h = self.regions["全界面"]
+        return (x, y + int(h * 0.80), int(w * 0.45), int(h * 0.20))
+
     def skip_wheelspin_animation(self, budget=20.0):
         """跳过转盘旋转：【连续轮询】每 ~0.2s 同时找「结果界面 respin」和「跳过按钮 skip」。
         一看到结果界面立刻返回（绝不再动作，那里点击/Enter=再抽）；转盘期【每次】看到「跳过」
@@ -3496,21 +3502,21 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 return False
             self.check_pause()
             # 结果界面就绪 → 立刻返回（最高优先，先于任何点击判断）
-            if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+            if self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
                                     threshold=0.7, fast_mode=True):
                 return True
             if self.is_wheelspin_finished():
                 return False
             # 转盘旋转期：看到「跳过」就点（1s 冷却），逐个转盘跳过
             if time.time() - last_click > 1.0:
-                pos_skip = self.find_image_gray("wheelspin/skip.png", region=self.regions["全界面"],
+                pos_skip = self.find_image_gray("wheelspin/skip.png", region=self._wheelspin_prompt_region(),
                                                 threshold=0.7, fast_mode=True)
                 if pos_skip:
                     self.game_click(pos_skip)
                     last_click = time.time()
                     self.log("[Wheelspin] 点击「跳过」（逐个转盘跳过）。")
             time.sleep(0.2)
-        return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+        return self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
                                     threshold=0.7, fast_mode=True) is not None
 
     def collect_and_respin(self):
@@ -3518,7 +3524,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         避免连发 enter 在已拥有对话框出现时误触选项1。定位失败时仅在确认无对话框后回退按 enter。"""
         pos = getattr(self, "_wheelspin_respin_pos", None)
         if pos is None:
-            pos = self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+            pos = self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
                                        threshold=0.7, fast_mode=False)
             if pos:
                 self._wheelspin_respin_pos = pos
@@ -3598,7 +3604,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.skip_wheelspin_animation()
 
             # 2. 确认奖励结果界面就位
-            if not self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
+            if not self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
                                         threshold=0.7, fast_mode=True):
                 if self.is_wheelspin_finished():
                     self.log("[Wheelspin] 已退回菜单，抽奖结束。")
