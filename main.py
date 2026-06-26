@@ -3112,21 +3112,18 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log("[Gift] 进入主菜单失败。")
             return False
 
-        # 复用专精加点同款路径：pagedown 进「车辆与收藏」，用 BNandUC.png 锚定车辆页（只确认到位，不点它）
-        self.log("[Gift] 进入车辆页...")
+        # 复用专精加点同款路径：pagedown 进「车辆与收藏」。不用大照片模板 BNandUC 锚定车辆页——
+        # 它在大窗口放大后匹配严重劣化（实测 3134/1.224 下仅 0.27，导致送车进不去礼物箱），
+        # 直接等小文字模板「礼物箱入口」出现来确认到位（它本就是要点的目标，1.224 下命中 0.99）。
+        self.log("[Gift] 进入车辆页，定位礼物箱入口...")
         self.hw_press("pagedown", delay=0.15)
         time.sleep(1.0)
-        if not self.wait_for_buy_and_used_car(timeout=15):
-            self.log("[Gift] 未锚定到车辆页（未识别到【购买新车与二手车】）。")
-            return False
-
-        # 定位并点击「礼物箱」（车辆页中间列）
         self.check_pause()
         pos_giftbox = self.wait_for_image_gray(
             "giftbox/giftbox_entry.png", region=self.regions["全界面"],
-            threshold=0.7, timeout=8, interval=0.25, fast_mode=False)
+            threshold=0.7, timeout=15, interval=0.25, fast_mode=False)
         if not pos_giftbox:
-            self.log("[Gift] 未找到礼物箱入口。")
+            self.log("[Gift] 未找到礼物箱入口（可能未到车辆页 / 大窗口识别问题）。")
             return False
         self.game_click(pos_giftbox)
         time.sleep(1.5)
