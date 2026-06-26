@@ -534,25 +534,21 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                             "score": float(score),
                         }
 
-            # 兜底缩放比：不再用 1.0（那对非 2560 窗口是错的），而是用
-            # 「几何估计 当前宽/2560」；若之前已成功锁定过缩放比则保留它（粘性），
-            # 这样在没有好锚点的画面（送车网格/抽奖过渡）重算时也不会回退到错误的 1.0。
+            # 缩放比决策：实测表明 UI 随窗宽【线性】缩放，几何估计 curr_w/2560 一直精确
+            # （1851→0.723、3134→1.224 均精确吻合真实匹配缩放比）。故【以几何估计为准】，
+            # 锚点匹配仅在「高置信 且 与几何值接近(±8%)」时做微调——避免大窗口下锚点噪声
+            # 假峰（如把 1.224 误锁成 0.970）盖过正确值、进而拖垮以它为基准的 panel 匹配。
             geometric_scale = round(max(0.45, min(1.8, curr_w / 2560.0)), 3)
-            prev_scale = float(self.match_calibration.get("preferred_scale", 0.0) or 0.0)
-            prev_ready = self.match_calibration.get("state") == "ready"
-            preferred_scale = prev_scale if (prev_ready and 0.45 <= prev_scale <= 1.8) else geometric_scale
-            anchor_name = "none"
-            anchor_score = 0.0
-            state = "fallback"
-            status = "兜底模式"
-
-            if best:
-                anchor_name = best["template"]
-                anchor_score = best["score"]
-                if anchor_score >= 0.58:
-                    preferred_scale = best["scale"]
-                    state = "ready"
-                    status = "已校准"
+            preferred_scale = geometric_scale
+            anchor_name = best["template"] if best else "none"
+            anchor_score = best["score"] if best else 0.0
+            state = "ready"
+            status = "几何估计"
+            if best and anchor_score >= 0.62 and abs(best["scale"] - geometric_scale) <= 0.08 * geometric_scale:
+                preferred_scale = best["scale"]      # 锚点高置信且接近几何 → 精修
+                status = "已校准(锚点精修)"
+            elif best and abs(best["scale"] - geometric_scale) > 0.08 * geometric_scale:
+                status = f"几何估计(忽略离谱锚点 {anchor_name}@{best['scale']:.3f}/{anchor_score:.2f})"
 
             gray_threshold_offset = 0.0
             if sharpness < 120:
@@ -3473,7 +3469,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.log(f"[Wheelspin] 未找到「{mode}」入口图块。")
             return False
         self.game_click(pos_entry)
-        time.sleep(1.8)
+        time.sleep(0.6)   # 入口已触发第1抽，尽快交给 advance_to_result 轮询，别错过首抽的「跳过」窗口
         self.log(f"[Wheelspin] 已点击「{mode}」入口，进入抽奖。")
         return True
 
