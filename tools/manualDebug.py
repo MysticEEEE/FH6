@@ -41,6 +41,7 @@ class FH_DebugBot(FH_UltimateBot):
         super().__init__()
         self.log("══════════ manualDebug 调试版已启动 ══════════")
         self.log("  F2 = 单车送车测试（对当前选中卡走真实送车决策）")
+        self.log("  F3 = 抽奖调试测试（连抽3次，每步存截图+识别日志）")
         self.log("  F4 = 单卡识别（全新/目标车/AI，只读存图）")
         self.log("  F5 = 大范围识别（专精选车同款，全屏找全新车）")
         self.log("  F6 = 整屏截图 -> debug/screenshots")
@@ -53,6 +54,8 @@ class FH_DebugBot(FH_UltimateBot):
     def on_debug_hotkey(self, k):
         if k == keyboard.Key.f2:
             self.gift_one_card_test()
+        elif k == keyboard.Key.f3:
+            self.wheelspin_debug_test()
         elif k == keyboard.Key.f4:
             self.recognize_current_card()
         elif k == keyboard.Key.f5:
@@ -326,6 +329,125 @@ class FH_DebugBot(FH_UltimateBot):
 
         self.current_thread = threading.Thread(target=runner, daemon=True)
         self.current_thread.start()
+
+    # ========================================================================
+    # --- F3 抽奖调试测试（连抽 N 次，每步操作/识别都存截图+日志，便于排障不靠猜）---
+    # ========================================================================
+    def wheelspin_debug_test(self, spins_target=3):
+        """F3：用当前抽奖模式连抽 spins_target 次，每一步（跳过/结果/领取/已拥有/出售）
+        都存整屏截图 + 打印各模板(skip/respin/owned/menu)命中情况到 debug/wheelspin_seq/<时间>/。
+        逐个转盘点跳过；最后一抽 ESC 仅领取。全程检查 is_running，F8 可随时停止。"""
+        if self.is_running:
+            self.log("[F3] 已有任务运行中，忽略。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self.update_running_state("running")
+
+        def work():
+            stamp = time.strftime("%H%M%S")
+            seq = os.path.join(get_app_dir(), "debug", "wheelspin_seq", stamp)
+            step = [0]
+
+            def snap(tag):
+                step[0] += 1
+                try:
+                    self.write_debug_image(os.path.join(seq, f"{step[0]:03d}_{tag}.png"),
+                                           self.capture_region(self.regions["全界面"]))
+                except Exception:
+                    pass
+                self.log(f"[F3] {step[0]:03d} {tag}")
+
+            def detect(label):
+                reg = self.regions["全界面"]
+                r = self.find_image_gray("wheelspin/respin.png", region=reg, threshold=0.7, fast_mode=True)
+                s = self.find_image_gray("wheelspin/skip.png", region=reg, threshold=0.7, fast_mode=True)
+                o = self.find_image_gray("wheelspin/owned.png", region=reg, threshold=0.7, fast_mode=True)
+                m = self.is_wheelspin_finished()
+                self.log(f"[F3] 识别({label}): 结果={'有' if r else '无'} 跳过={'有' if s else '无'} "
+                         f"已拥有={'有' if o else '无'} 菜单={'有' if m else '无'}")
+                return r, s, o, m
+
+            try:
+                self.ui_call(self.lower)
+                time.sleep(0.3)
+                if not self.check_and_focus_game():
+                    self.log("[F3] 未能聚焦游戏。")
+                    return
+                time.sleep(0.3)
+                snap("00_start")
+                self.log(f"[F3] 模式={self.config.get('wheelspin_mode','抽奖')}，目标 {spins_target} 抽。导航进入...")
+                if not self.navigate_to_wheelspin():
+                    self.log("[F3] 导航失败，结束。")
+                    return
+                snap("01_entered_spin1_triggered")
+                self._wheelspin_respin_pos = None
+
+                for n in range(1, spins_target + 1):
+                    if not self.is_running:
+                        break
+                    self.log(f"[F3] ===== 第 {n}/{spins_target} 抽：跳过动画阶段 =====")
+                    # 跳过阶段：逐帧轮询存图 + 逐个转盘点跳过（与真实 skip 逻辑一致）
+                    deadline = time.time() + 22.0
+                    last_click = 0.0
+                    got_result = False
+                    while time.time() < deadline and self.is_running:
+                        self.check_pause()
+                        r, s, o, m = detect(f"spin{n}_poll")
+                        snap(f"spin{n}_poll")
+                        if r:
+                            self.log(f"[F3] 第{n}抽：结果界面就绪。")
+                            got_result = True
+                            break
+                        if m:
+                            self.log(f"[F3] 第{n}抽：已退回菜单（提前结束）。")
+                            break
+                        if s and time.time() - last_click > 1.0:
+                            self.game_click(s)
+                            last_click = time.time()
+                            snap(f"spin{n}_clicked_skip")
+                            self.log(f"[F3] 第{n}抽：点击「跳过」。")
+                        time.sleep(0.5)
+
+                    if not self.is_running:
+                        break
+                    if not got_result:
+                        self.log(f"[F3] 第{n}抽：22s 内未出现结果界面，停止排查。")
+                        snap(f"spin{n}_no_result")
+                        break
+
+                    # 领取阶段
+                    if n >= spins_target:
+                        self.log(f"[F3] 第{n}抽=最后一抽 → 按 ESC 仅领取不再抽。")
+                        self.hw_press("esc")
+                        time.sleep(1.2)
+                        snap(f"spin{n}_esc_collected")
+                    else:
+                        self.log(f"[F3] 第{n}抽：点击「领取并再抽」。")
+                        self.collect_and_respin()
+                        snap(f"spin{n}_after_collect")
+
+                    # 已拥有车辆处理（逐帧观察）
+                    detect(f"spin{n}_check_owned")
+                    snap(f"spin{n}_check_owned")
+                    handled = self.handle_owned_car_dialog()
+                    if handled:
+                        snap(f"spin{n}_after_sell")
+                        self.log(f"[F3] 第{n}抽：已出售 {handled} 辆重复车。")
+                    else:
+                        self.log(f"[F3] 第{n}抽：无已拥有对话框。")
+
+                snap("99_end")
+                self.log(f"[F3] 抽奖调试测试结束。截图在 debug/wheelspin_seq/{stamp}/")
+            except Exception as e:
+                self.log(f"[F3] 异常: {e}")
+            finally:
+                self.is_running = False
+                self.is_paused = False
+                self.update_running_state("idle")
+                self.ui_call(self.lift)
+
+        threading.Thread(target=work, daemon=True).start()
 
     # ========================================================================
     # --- F7 诊断模式（借鉴上游：打包一份排障材料，方便发出来分析）---

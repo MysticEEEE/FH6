@@ -3483,13 +3483,14 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "wheelspin/menu_anchor.png", region=self.regions["全界面"],
             threshold=0.7, fast_mode=False) is not None
 
-    def skip_wheelspin_animation(self, budget=12.0):
-        """跳过转盘旋转：【连续轮询】每 ~0.2s 同时找「结果界面 respin」和「跳过按钮 skip」——
-        一看到结果界面立刻返回（绝不再动作，那里点击/Enter=再抽）；转盘期一看到「跳过」按钮就点
-        （加速跳过，只点一次）。轮询而非「单次检测+死等4s」，所以能在按钮出现的瞬间抓住它。
-        点不到「跳过」也没关系：动画播完后结果界面照样会出现，由 respin 检测兜住。"""
-        clicked_skip = False
+    def skip_wheelspin_animation(self, budget=20.0):
+        """跳过转盘旋转：【连续轮询】每 ~0.2s 同时找「结果界面 respin」和「跳过按钮 skip」。
+        一看到结果界面立刻返回（绝不再动作，那里点击/Enter=再抽）；转盘期【每次】看到「跳过」
+        按钮就点（1 秒冷却防刷）——超级抽奖有 3 个转盘、每个都要单独跳过，所以必须逐个点，
+        不能只点一次。点不到也没关系：动画自然播完后结果界面照样出现，由 respin 兜住。
+        预算放宽到 20s 以覆盖超抽 3 转盘的较长动画。"""
         deadline = time.time() + budget
+        last_click = 0.0
         while time.time() < deadline:
             if not self.is_running:
                 return False
@@ -3500,14 +3501,14 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 return True
             if self.is_wheelspin_finished():
                 return False
-            # 转盘旋转期：一看到左下「跳过」按钮就点一次，加速跳过固定动画
-            if not clicked_skip:
+            # 转盘旋转期：看到「跳过」就点（1s 冷却），逐个转盘跳过
+            if time.time() - last_click > 1.0:
                 pos_skip = self.find_image_gray("wheelspin/skip.png", region=self.regions["全界面"],
                                                 threshold=0.7, fast_mode=True)
                 if pos_skip:
                     self.game_click(pos_skip)
-                    clicked_skip = True
-                    self.log("[Wheelspin] 点击「跳过」加速跳过转盘动画。")
+                    last_click = time.time()
+                    self.log("[Wheelspin] 点击「跳过」（逐个转盘跳过）。")
             time.sleep(0.2)
         return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True) is not None
@@ -3548,13 +3549,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         从默认高亮项按 wheelspin_owned_downs 次「下」到「出售」，再 enter 卖出。"""
         downs = int(self.config.get("wheelspin_owned_downs", 2))
         handled = 0
-        for _ in range(4):  # 安全上限：最多连续处理 4 个对话框
+        for idx in range(4):  # 安全上限：最多连续处理 4 个对话框
             if not self.is_running:
                 break
             self.check_pause()
+            # 首个对话框给足时间出现（超抽较慢）；后续来得快，缩短等待降低无重复车时的空等
+            timeout = 3.5 if idx == 0 else 1.5
             if not self.wait_for_image_gray(
                     "wheelspin/owned.png", region=self.regions["全界面"],
-                    threshold=0.7, timeout=2.0, interval=0.2, fast_mode=True):
+                    threshold=0.7, timeout=timeout, interval=0.2, fast_mode=True):
                 break
             self.log("[Wheelspin] 检测到「已拥有车辆」→ 选择「出售」卖出重复车。")
             for _ in range(downs):
