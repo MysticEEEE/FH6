@@ -39,7 +39,15 @@ class FH_DebugBot(FH_UltimateBot):
         # 让 log 落盘、序列存图、送车测试按钮、调试热键都在 debug 模式下生效。
         self.debug_mode = True
         super().__init__()
-        self.log("====== manualDebug 调试版已启动（F2送车测试 F4单卡识别 F5大范围 F6截图 F7诊断）======")
+        self.log("══════════ manualDebug 调试版已启动 ══════════")
+        self.log("  F2 = 单车送车测试（对当前选中卡走真实送车决策）")
+        self.log("  F4 = 单卡识别（全新/目标车/AI，只读存图）")
+        self.log("  F5 = 大范围识别（专精选车同款，全屏找全新车）")
+        self.log("  F6 = 整屏截图 -> debug/screenshots")
+        self.log("  F7 = 诊断打包（窗口/校准/日志/截图 -> debug/diagnostics）")
+        self.log("  F8 = 停止    F9 = 暂停/恢复")
+        self.log("  另有「送车测试」按钮：导航+筛选+逐卡识别存图，绝不送车")
+        self.log("═══════════════════════════════════════════")
 
     # ---- 调试热键分发（被父类 start_hotkey_listener 的 on_press 调用）----
     def on_debug_hotkey(self, k):

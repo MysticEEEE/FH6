@@ -219,7 +219,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def __init__(self):
         super().__init__()
         #窗口相关
-        self.title(f"FH6Auto by Krami v{CURRENT_VERSION}")
+        self.title("mysticEe v0.2")
         self.geometry("1480x800")
         self.minsize(1320, 760)
         self.attributes("-topmost", False)
@@ -341,6 +341,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "循环跑图": 0.0,
             "批量买车": 0.0,
             "专精加点": 0.0,
+            "自动送车": 0.0,
+            "自动抽奖": 0.0,
             "测试启动": 0.0,
             "F3测图": 0.0,
         }
@@ -732,6 +734,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         race_total = totals.get("循环跑图", 0.0)
         buy_total = totals.get("批量买车", 0.0)
         cj_total = totals.get("专精加点", 0.0)
+        gift_total = totals.get("自动送车", 0.0)
+        spin_total = totals.get("自动抽奖", 0.0)
 
         active_task = getattr(self, "active_task_name", "")
         if active_task == "循环跑图":
@@ -740,6 +744,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             buy_total += task_elapsed
         elif active_task == "专精加点":
             cj_total += task_elapsed
+        elif active_task == "自动送车":
+            gift_total += task_elapsed
+        elif active_task == "自动抽奖":
+            spin_total += task_elapsed
 
         try:
             self.lbl_runtime_task_time.configure(text=self.format_elapsed(task_elapsed))
@@ -748,7 +756,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 text=(
                     f"跑图 {self.format_elapsed(race_total)} | "
                     f"买车 {self.format_elapsed(buy_total)} | "
-                    f"专精 {self.format_elapsed(cj_total)}"
+                    f"专精 {self.format_elapsed(cj_total)} | "
+                    f"送车 {self.format_elapsed(gift_total)} | "
+                    f"抽奖 {self.format_elapsed(spin_total)}"
                 )
             )
         except Exception: pass
@@ -3366,7 +3376,23 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 break
 
         self.log(f"[Gift] 送车流程结束，共送出 {gifted} 辆。")
+        self.gift_exit_to_menu()
         return True
+
+    def gift_exit_to_menu(self, max_esc=5):
+        """送车结束后退回主菜单：按 ESC 后检测主菜单锚点(collectionjournal/horizon6)，
+        检测到即停——不写死次数（不同入口层级可能差一层），兜底最多 max_esc 次。"""
+        for i in range(max_esc):
+            if self.find_image_gray("collectionjournal.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True) or \
+               self.find_image_gray("horizon6.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True):
+                self.log(f"[Gift] 已退回主菜单（按了 {i} 次 ESC）。")
+                return True
+            self.hw_press("esc")
+            time.sleep(0.7)
+        self.log(f"[Gift] 已按 {max_esc} 次 ESC 退出（未确认主菜单锚点，兜底停止）。")
+        return False
 
     # ==========================================
     # --- 模块：自动抽奖 ---
@@ -3457,41 +3483,32 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "wheelspin/menu_anchor.png", region=self.regions["全界面"],
             threshold=0.7, fast_mode=False) is not None
 
-    def skip_wheelspin_animation(self):
-        """跳过转盘旋转：识别左下角「跳过」按钮(skip.png) 并【点击】→ 从点击起约 4 秒(闪光+画面稳定)
-        → 再识别结果界面 respin.png（左下「Enter 领取并再抽」/「Esc 领取」）。
-        铁律：结果界面一出现立刻停手——那里点击/Enter=再抽，多动作就是过抽/重复车误入库。
-        识别不到「跳过」时只等待让动画自然结束，绝不盲按键。"""
-        for attempt in range(4):
+    def skip_wheelspin_animation(self, budget=12.0):
+        """跳过转盘旋转：【连续轮询】每 ~0.2s 同时找「结果界面 respin」和「跳过按钮 skip」——
+        一看到结果界面立刻返回（绝不再动作，那里点击/Enter=再抽）；转盘期一看到「跳过」按钮就点
+        （加速跳过，只点一次）。轮询而非「单次检测+死等4s」，所以能在按钮出现的瞬间抓住它。
+        点不到「跳过」也没关系：动画播完后结果界面照样会出现，由 respin 检测兜住。"""
+        clicked_skip = False
+        deadline = time.time() + budget
+        while time.time() < deadline:
             if not self.is_running:
                 return False
             self.check_pause()
-            # 已是结果界面 → 立刻返回，不再有任何动作
+            # 结果界面就绪 → 立刻返回（最高优先，先于任何点击判断）
             if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True):
                 return True
             if self.is_wheelspin_finished():
                 return False
-            # 识别左下角「跳过」按钮 → 点击它（识别不到则不按键，等动画自然结束）
-            pos_skip = self.find_image_gray("wheelspin/skip.png", region=self.regions["全界面"],
-                                            threshold=0.7, fast_mode=True)
-            if pos_skip:
-                self.game_click(pos_skip)
-                self.log("[Wheelspin] 点击「跳过」跳过转盘动画。")
-            # 从点击起约 4 秒（闪光+画面稳定），期间可中断但【不提前判定结果，也不按键】
-            waited = 0.0
-            while waited < 4.0:
-                if not self.is_running:
-                    return False
-                self.check_pause()
-                time.sleep(0.3)
-                waited += 0.3
-            # 4 秒后再识别结果界面
-            if self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
-                                    threshold=0.7, fast_mode=True):
-                return True
-            if self.is_wheelspin_finished():
-                return False
+            # 转盘旋转期：一看到左下「跳过」按钮就点一次，加速跳过固定动画
+            if not clicked_skip:
+                pos_skip = self.find_image_gray("wheelspin/skip.png", region=self.regions["全界面"],
+                                                threshold=0.7, fast_mode=True)
+                if pos_skip:
+                    self.game_click(pos_skip)
+                    clicked_skip = True
+                    self.log("[Wheelspin] 点击「跳过」加速跳过转盘动画。")
+            time.sleep(0.2)
         return self.find_image_gray("wheelspin/respin.png", region=self.regions["全界面"],
                                     threshold=0.7, fast_mode=True) is not None
 

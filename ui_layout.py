@@ -332,7 +332,7 @@ def setup_ui(bot):
     bot.lbl_runtime_loop = make_runtime_label("大循环", "0 / 0")
     bot.lbl_runtime_task_time = make_runtime_label("本任务耗时", "00:00:00")
     bot.lbl_runtime_total_time = make_runtime_label("总运行时间", "00:00:00")
-    bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 专精 00:00:00")
+    bot.lbl_runtime_totals = make_runtime_label("模块累计", "跑图 00:00:00 | 买车 00:00:00 | 专精 00:00:00 | 送车 00:00:00 | 抽奖 00:00:00")
 
     bot.btn_runtime_gift = button(
         bot.runtime_frame, "自动送车", bot.start_gift_pipeline,
@@ -380,30 +380,31 @@ def setup_ui(bot):
         )
         bot.btn_runtime_gift_test.pack(side="right", padx=(0, 8), pady=14)
 
+    # 停止/暂停移到「守护设置」栏右侧，避免与运行状态/耗时栏挤在一起
     bot.btn_runtime_pause = button(
-        bot.runtime_frame,
+        bot.global_settings_frame,
         "暂停 F9",
         bot.toggle_pause,
         color=colors["yellow"],
         hover="#E6C000",
         width=82,
-        height=34,
+        height=30,
         text_color="#111111",
     )
     bot.btn_runtime_pause.configure(state="disabled")
-    bot.btn_runtime_pause.pack(side="right", padx=(0, 8), pady=14)
+    bot.btn_runtime_pause.pack(side="right", padx=(0, 16), pady=11)
 
     bot.btn_runtime_stop = button(
-        bot.runtime_frame,
+        bot.global_settings_frame,
         "停止 F8",
         bot.stop_all,
         color=colors["red"],
         hover=colors["red_hover"],
         width=82,
-        height=34,
+        height=30,
     )
     bot.btn_runtime_stop.configure(state="disabled")
-    bot.btn_runtime_stop.pack(side="right", padx=(0, 8), pady=14)
+    bot.btn_runtime_stop.pack(side="right", padx=(0, 8), pady=11)
 
     bot.log_header = ctk.CTkFrame(bot.main_container, fg_color="transparent")
     bot.log_header.pack(fill="x", pady=(10, 0))
