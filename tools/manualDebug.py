@@ -387,56 +387,31 @@ class FH_DebugBot(FH_UltimateBot):
                 for n in range(1, spins_target + 1):
                     if not self.is_running:
                         break
-                    self.log(f"[F3] ===== 第 {n}/{spins_target} 抽：跳过动画阶段 =====")
-                    # 跳过阶段：逐帧轮询存图 + 逐个转盘点跳过（与真实 skip 逻辑一致）
-                    deadline = time.time() + 22.0
-                    last_click = 0.0
-                    got_result = False
-                    while time.time() < deadline and self.is_running:
-                        self.check_pause()
-                        r, s, o, m = detect(f"spin{n}_poll")
-                        snap(f"spin{n}_poll")
-                        if r:
-                            self.log(f"[F3] 第{n}抽：结果界面就绪。")
-                            got_result = True
-                            break
-                        if m:
-                            self.log(f"[F3] 第{n}抽：已退回菜单（提前结束）。")
-                            break
-                        if s and time.time() - last_click > 1.0:
-                            self.game_click(s)
-                            last_click = time.time()
-                            snap(f"spin{n}_clicked_skip")
-                            self.log(f"[F3] 第{n}抽：点击「跳过」。")
-                        time.sleep(0.5)
-
+                    self.log(f"[F3] ===== 第 {n}/{spins_target} 抽 =====")
+                    detect(f"spin{n}_before_advance")
+                    snap(f"spin{n}_before_advance")
+                    # 调用【真实】统一推进逻辑（内部高频轮询：跳过动画 + 途中卖重复车）
+                    ready = self.wheelspin_advance_to_result()
+                    snap(f"spin{n}_after_advance")
                     if not self.is_running:
                         break
-                    if not got_result:
-                        self.log(f"[F3] 第{n}抽：22s 内未出现结果界面，停止排查。")
-                        snap(f"spin{n}_no_result")
+                    if not ready:
+                        self.log(f"[F3] 第{n}抽：未到结果界面（可能已退回菜单），停止。")
                         break
+                    self.log(f"[F3] 第{n}抽：结果界面就绪。")
 
-                    # 领取阶段
                     if n >= spins_target:
                         self.log(f"[F3] 第{n}抽=最后一抽 → 按 ESC 仅领取不再抽。")
                         self.hw_press("esc")
                         time.sleep(1.2)
                         snap(f"spin{n}_esc_collected")
+                        handled = self.handle_owned_car_dialog()
+                        snap(f"spin{n}_final_owned")
+                        self.log(f"[F3] 第{n}抽：领取后出售 {handled} 辆重复车。")
                     else:
-                        self.log(f"[F3] 第{n}抽：点击「领取并再抽」。")
+                        self.log(f"[F3] 第{n}抽：点击「领取并再抽」（触发下一抽）。")
                         self.collect_and_respin()
                         snap(f"spin{n}_after_collect")
-
-                    # 已拥有车辆处理（逐帧观察）
-                    detect(f"spin{n}_check_owned")
-                    snap(f"spin{n}_check_owned")
-                    handled = self.handle_owned_car_dialog()
-                    if handled:
-                        snap(f"spin{n}_after_sell")
-                        self.log(f"[F3] 第{n}抽：已出售 {handled} 辆重复车。")
-                    else:
-                        self.log(f"[F3] 第{n}抽：无已拥有对话框。")
 
                 snap("99_end")
                 self.log(f"[F3] 抽奖调试测试结束。截图在 debug/wheelspin_seq/{stamp}/")

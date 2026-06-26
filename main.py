@@ -3489,33 +3489,53 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         x, y, w, h = self.regions["全界面"]
         return (x, y + int(h * 0.80), int(w * 0.45), int(h * 0.20))
 
-    def skip_wheelspin_animation(self, budget=20.0):
-        """跳过转盘旋转：【连续轮询】每 ~0.2s 同时找「结果界面 respin」和「跳过按钮 skip」。
-        一看到结果界面立刻返回（绝不再动作，那里点击/Enter=再抽）；转盘期【每次】看到「跳过」
-        按钮就点（1 秒冷却防刷）——超级抽奖有 3 个转盘、每个都要单独跳过，所以必须逐个点，
-        不能只点一次。点不到也没关系：动画自然播完后结果界面照样出现，由 respin 兜住。
-        预算放宽到 20s 以覆盖超抽 3 转盘的较长动画。"""
+    def wheelspin_advance_to_result(self, budget=22.0):
+        """一抽触发后，统一【高频轮询(~0.12s)】推进到「结果界面就绪」。每帧（按优先级）：
+          结果界面(respin，左下提示区) → 返回 True（最高优先，绝不再动作，那里点击/Enter=再抽）
+          已拥有车辆(owned，全屏)      → 下×N + enter 卖出重复车，继续
+          跳过(skip，左下提示区)        → 点击（1s 冷却），逐个跳过动画，加速 ~2s
+          退回菜单(menu)               → 返回 False（每 ~1s 查一次，避免拖慢轮询）
+        关键：把「跳过 + 卖重复车」合进同一个快循环，一触发就开始——不再先空等对话框 3.5s
+        或全屏慢匹配，避免错过转瞬即逝的「跳过」窗口。"""
+        downs = int(self.config.get("wheelspin_owned_downs", 2))
         deadline = time.time() + budget
         last_click = 0.0
+        last_menu_check = 0.0
         while time.time() < deadline:
             if not self.is_running:
                 return False
             self.check_pause()
-            # 结果界面就绪 → 立刻返回（最高优先，先于任何点击判断）
-            if self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
+            prompt = self._wheelspin_prompt_region()
+            # 1. 结果界面就绪 → 立刻返回
+            if self.find_image_gray("wheelspin/respin.png", region=prompt,
                                     threshold=0.7, fast_mode=True):
                 return True
-            if self.is_wheelspin_finished():
-                return False
-            # 转盘旋转期：看到「跳过」就点（1s 冷却），逐个转盘跳过
+            # 2. 途中弹「已拥有车辆」→ 出售（仅确实检测到才按方向键，绝不盲按）
+            if self.find_image_gray("wheelspin/owned.png", region=self.regions["全界面"],
+                                    threshold=0.7, fast_mode=True):
+                self.log("[Wheelspin] 检测到「已拥有车辆」→ 出售重复车。")
+                for _ in range(downs):
+                    self.hw_press("down", delay=0.12)
+                    time.sleep(0.2)
+                self.hw_press("enter", delay=0.12)
+                time.sleep(0.8)
+                continue
+            # 3. 转盘动画期：看到「跳过」就点（1s 冷却）
             if time.time() - last_click > 1.0:
-                pos_skip = self.find_image_gray("wheelspin/skip.png", region=self._wheelspin_prompt_region(),
+                pos_skip = self.find_image_gray("wheelspin/skip.png", region=prompt,
                                                 threshold=0.7, fast_mode=True)
                 if pos_skip:
                     self.game_click(pos_skip)
                     last_click = time.time()
-                    self.log("[Wheelspin] 点击「跳过」（逐个转盘跳过）。")
-            time.sleep(0.2)
+                    self.log("[Wheelspin] 点击「跳过」加速动画。")
+                    time.sleep(0.1)
+                    continue
+            # 4. 退回菜单（隔 ~1s 查一次，全屏匹配较慢，不必每帧）
+            if time.time() - last_menu_check > 1.0:
+                last_menu_check = time.time()
+                if self.is_wheelspin_finished():
+                    return False
+            time.sleep(0.12)
         return self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
                                     threshold=0.7, fast_mode=True) is not None
 
@@ -3595,17 +3615,10 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         while self.is_running:
             self.check_pause()
 
-            # 确定性结束：已退回「我的地平线」菜单（次数耗尽会自动返回）
-            if self.is_wheelspin_finished():
-                self.log("[Wheelspin] 已退回菜单，抽奖结束。")
-                break
-
-            # 1. 跳过当前这一抽的转盘动画 → 等结果界面
-            self.skip_wheelspin_animation()
-
-            # 2. 确认奖励结果界面就位
-            if not self.find_image_gray("wheelspin/respin.png", region=self._wheelspin_prompt_region(),
-                                        threshold=0.7, fast_mode=True):
+            # 统一高频推进：跳过动画 + 途中卖重复车，直到「结果界面就绪」或「退回菜单」
+            ready = self.wheelspin_advance_to_result()
+            if not ready:
+                # 没到结果：要么已退回菜单(正常结束)，要么异常
                 if self.is_wheelspin_finished():
                     self.log("[Wheelspin] 已退回菜单，抽奖结束。")
                     break
@@ -3613,24 +3626,23 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 if no_result_streak >= 3:
                     self.log("[Wheelspin] 连续多次未出现奖励结果界面，停止以防异常。")
                     break
-                time.sleep(0.6)
                 continue
             no_result_streak = 0
 
-            # 3. 达次数上限 → 这是最后一抽：只领取(ESC)不再抽，再处理已拥有对话框，结束
+            # 达次数上限 → 最后一抽：ESC 仅领取不再抽；领取后仍可能弹「已拥有」→ 出售
             if max_count and spins >= max_count:
                 self.log(f"[Wheelspin] 第 {spins} 抽为最后一抽 → 按 ESC 仅领取不再抽。")
                 self.collect_only()
-                self.handle_owned_car_dialog()   # 领取后仍可能弹「已拥有」→ 出售，再回菜单
+                self.handle_owned_car_dialog()
                 self.log(f"[Wheelspin] 达到上限 {max_count}，停止。")
                 break
 
-            # 4. 非最后一抽：领取并再抽（触发下一抽）→ 计数+1 → 处理本抽的已拥有对话框
+            # 非最后一抽：领取并再抽（触发下一抽）→ 计数+1。本抽领取后若弹「已拥有」，
+            # 由下一轮 advance_to_result 在卖出阶段统一处理（无需在此空等）。
             self.collect_and_respin()
             spins += 1
             self.update_running_ui("自动抽奖", spins, max_count or 0)
             self.log(f"[Wheelspin] 已触发第 {spins} 抽。")
-            self.handle_owned_car_dialog()
 
         self.log(f"[Wheelspin] 抽奖流程结束，共抽 {spins} 次。")
         return True
