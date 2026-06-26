@@ -1531,6 +1531,23 @@ class ImageMatcherMixin:
         y1 = max(0, (h - ch) // 2)
         x1 = max(0, (w - cw) // 2)
         return img[y1:y1 + ch, x1:x1 + cw]
+    def _scale_match_inputs(self, screen_gray, tpl_raw, scale):
+        """按缩放比准备 (待匹配截图, 待匹配模板, 回映系数 back)。
+        - scale>1（大窗口本需放大模板）→ 改为把【截图】按 1/scale 干净缩小、用【原生模板】匹配，
+          避免用 INTER_AREA 放大模板造成模糊（大照片模板尤其受害，如 BNandUC 在 1.224 下骤降到 0.27）。
+          匹配坐标需 ×back(=scale) 映射回原图。
+        - scale==1 → 原生不动。
+        - scale<1（小窗口）→ 沿用原逻辑：按 scale 缩小模板（INTER_AREA 适合缩小）。back=1。
+        只有 scale>1 才改变行为，所以 ≤2560 的窗口零影响。"""
+        if scale > 1.0 + 1e-6:
+            f = 1.0 / scale
+            screen_m = cv2.resize(screen_gray, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+            return screen_m, tpl_raw, scale
+        if scale < 1.0 - 1e-6:
+            tpl_m = cv2.resize(tpl_raw, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            return screen_gray, tpl_m, 1.0
+        return screen_gray, tpl_raw, 1.0
+
     def find_image_gray(self, template_path, region=None, threshold=0.75, fast_mode=True, invert_mode=False):
         """
         纯灰度UI查找，支持多分辨率缩放 + 可选翻转模式
@@ -1558,25 +1575,23 @@ class ImageMatcherMixin:
                 return None
 
             for scale in scales_to_try:
-                # 【改动】从原始模板复制，避免反复 resize 污染
-                tpl_gray = tpl_gray_raw
-                if scale != 1.0:
-                    tpl_gray = cv2.resize(tpl_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                # scale>1 时缩小截图、用原生模板（避免放大模板变糊）；坐标用 back 映回
+                screen_m, tpl_gray, back = self._scale_match_inputs(screen_gray, tpl_gray_raw, scale)
 
                 h, w = tpl_gray.shape[:2]
-                if h < 5 or w < 5 or h > screen_gray.shape[0] or w > screen_gray.shape[1]:
+                if h < 5 or w < 5 or h > screen_m.shape[0] or w > screen_m.shape[1]:
                     continue
 
                 # ==============================
                 # 原图匹配
                 # ==============================
-                res = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
+                res = cv2.matchTemplate(screen_m, tpl_gray, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 if max_val >= threshold:
                     self.log(f"[GrayMatch] 命中: {template_path} | 模式: 原图 | 灰度得分: {max_val:.3f} (阈值 {threshold}) | 缩放比: {scale:.3f}")
                     return (
-                        max_loc[0] + w // 2 + (region[0] if region else 0),
-                        max_loc[1] + h // 2 + (region[1] if region else 0),
+                        int((max_loc[0] + w / 2) * back) + (region[0] if region else 0),
+                        int((max_loc[1] + h / 2) * back) + (region[1] if region else 0),
                     )
 
                 # ==============================
@@ -1584,13 +1599,13 @@ class ImageMatcherMixin:
                 # ==============================
                 if invert_mode:
                     tpl_inv = 255 - tpl_gray
-                    res_inv = cv2.matchTemplate(screen_gray, tpl_inv, cv2.TM_CCOEFF_NORMED)
+                    res_inv = cv2.matchTemplate(screen_m, tpl_inv, cv2.TM_CCOEFF_NORMED)
                     _, max_val_inv, _, max_loc_inv = cv2.minMaxLoc(res_inv)
                     if max_val_inv >= threshold:
                         self.log(f"[GrayMatch] 命中: {template_path} | 模式: 反相 | 灰度得分: {max_val_inv:.3f} (阈值 {threshold}) | 缩放比: {scale:.3f}")
                         return (
-                            max_loc_inv[0] + w // 2 + (region[0] if region else 0),
-                            max_loc_inv[1] + h // 2 + (region[1] if region else 0),
+                            int((max_loc_inv[0] + w / 2) * back) + (region[0] if region else 0),
+                            int((max_loc_inv[1] + h / 2) * back) + (region[1] if region else 0),
                         )
 
             return None
@@ -1625,25 +1640,23 @@ class ImageMatcherMixin:
                     continue
 
                 for scale in scales_to_try:
-                    # 【改动】从原始模板复制
-                    tpl_gray = tpl_gray_raw
-                    if scale != 1.0:
-                        tpl_gray = cv2.resize(tpl_gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                    # scale>1 时缩小截图、用原生模板（避免放大模板变糊）；坐标用 back 映回
+                    screen_m, tpl_gray, back = self._scale_match_inputs(screen_gray, tpl_gray_raw, scale)
 
                     h, w = tpl_gray.shape[:2]
-                    if h < 5 or w < 5 or h > screen_gray.shape[0] or w > screen_gray.shape[1]:
+                    if h < 5 or w < 5 or h > screen_m.shape[0] or w > screen_m.shape[1]:
                         continue
 
                     # ==============================
                     # 原图匹配
                     # ==============================
-                    res = cv2.matchTemplate(screen_gray, tpl_gray, cv2.TM_CCOEFF_NORMED)
+                    res = cv2.matchTemplate(screen_m, tpl_gray, cv2.TM_CCOEFF_NORMED)
                     _, max_val, _, max_loc = cv2.minMaxLoc(res)
                     if max_val >= threshold:
                         self.log(f"[GrayMatchAny] 命中: {img_path} | 模式: 原图 | 灰度得分: {max_val:.3f} (阈值 {threshold}) | 缩放比: {scale:.3f}")
                         return (
-                            max_loc[0] + w // 2 + (region[0] if region else 0),
-                            max_loc[1] + h // 2 + (region[1] if region else 0),
+                            int((max_loc[0] + w / 2) * back) + (region[0] if region else 0),
+                            int((max_loc[1] + h / 2) * back) + (region[1] if region else 0),
                         )
 
                     # ==============================
@@ -1651,13 +1664,13 @@ class ImageMatcherMixin:
                     # ==============================
                     if invert_mode:
                         tpl_inv = 255 - tpl_gray
-                        res_inv = cv2.matchTemplate(screen_gray, tpl_inv, cv2.TM_CCOEFF_NORMED)
+                        res_inv = cv2.matchTemplate(screen_m, tpl_inv, cv2.TM_CCOEFF_NORMED)
                         _, max_val_inv, _, max_loc_inv = cv2.minMaxLoc(res_inv)
                         if max_val_inv >= threshold:
                             self.log(f"[GrayMatchAny] 命中: {img_path} | 模式: 反相 | 灰度得分: {max_val_inv:.3f} (阈值 {threshold}) | 缩放比: {scale:.3f}")
                             return (
-                                max_loc_inv[0] + w // 2 + (region[0] if region else 0),
-                                max_loc_inv[1] + h // 2 + (region[1] if region else 0),
+                                int((max_loc_inv[0] + w / 2) * back) + (region[0] if region else 0),
+                                int((max_loc_inv[1] + h / 2) * back) + (region[1] if region else 0),
                             )
 
             return None
