@@ -2488,8 +2488,9 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
             if self.race_counter == target_count - 1:
                 self.hw_press("enter")
-                time.sleep(2.0)
-                self.handle_author_prompt(release_drive_keys=False)
+                # 最后一抽：评价弹窗离开结算页后才出现，轮询等待最多 2s 再点赞确认
+                time.sleep(0.4)
+                self.handle_author_prompt(release_drive_keys=False, wait_timeout=2.0)
             else:
                 self.hw_press("x")
                 time.sleep(0.8)
@@ -2513,14 +2514,27 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             time.sleep(0.35)
         return False
 
-    def handle_author_prompt(self, release_drive_keys=False):
-        pos_author = self.find_any_image_gray(
-            ["likeauthor.png", "dislikeauthor.png"],
-            region=self.regions["全界面"],
-            threshold=0.68,
-            fast_mode=False,
-            invert_mode=True,
-        )
+    def handle_author_prompt(self, release_drive_keys=False, wait_timeout=0.0):
+        # 评价弹窗有时延迟出现（尤其最后一抽离开结算页之后）→ wait_timeout>0 时改用短轮询等待
+        # （吸取上游 c0baca7 修复）；默认 0 保持原单次检测，不给中途的高频调用增加延迟。
+        if wait_timeout > 0:
+            pos_author = self.wait_for_any_image_gray(
+                ["likeauthor.png", "dislikeauthor.png"],
+                region=self.regions["全界面"],
+                threshold=0.68,
+                timeout=wait_timeout,
+                interval=0.15,
+                fast_mode=True,
+                invert_mode=True,
+            )
+        else:
+            pos_author = self.find_any_image_gray(
+                ["likeauthor.png", "dislikeauthor.png"],
+                region=self.regions["全界面"],
+                threshold=0.68,
+                fast_mode=False,
+                invert_mode=True,
+            )
         if not pos_author:
             return False
 
