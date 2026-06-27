@@ -173,12 +173,15 @@ class ImageMatcherMixin:
             self.load_template_file_cache()
 
     def _warn_capture(self, msg):
-        """截屏异常限频日志（每 5s 最多一条），避免热路径刷屏，又能看清 VDD 断开时间线。"""
+        """截屏异常限频日志（每 5s 最多一条），避免热路径刷屏，又能看清 VDD 断开时间线。
+        debug_mode 下顺带存一组多显示器现场图（同样受 5s 限频），方便直接看每块屏当时是什么。"""
         now = time.time()
         if now - getattr(self, "_last_capture_warn", 0.0) > 5.0:
             self._last_capture_warn = now
             try:
                 self.log(f"[Capture] {msg}")
+                if getattr(self, "debug_mode", False) and hasattr(self, "debug_snap"):
+                    self.debug_snap("capture_black")
             except Exception:
                 pass
 

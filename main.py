@@ -1034,17 +1034,44 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         return False
 
     def debug_snap(self, tag):
-        """debug_mode（manualDebug 启动）下，把当前整屏截图存到 debug/snaps/，
-        用于排查"识别失败时屏上到底是什么"——比如关屏/锁屏会截到黑屏，一看便知。"""
+        """debug_mode（manualDebug 启动）下，出问题时存【多显示器】现场截图到 debug/snaps/：
+        ① 整块虚拟桌面（所有屏拼一起）② 每个显示器各一张（文件名带 尺寸+亮度bri）。
+        多显示器时一眼看清问题那刻每块屏的真实内容——VDD 黑了还是游戏跑到物理屏了都能分辨。
+        直接用 ImageGrab，不走 capture_region，避免与黑屏告警递归。"""
         if not getattr(self, "debug_mode", False):
             return
         try:
+            from PIL import ImageGrab
+            import win32api
             d = os.path.join(get_app_dir(), "debug", "snaps")
-            fname = f"{time.strftime('%H%M%S')}_{tag}.png"
-            if self.write_debug_image(os.path.join(d, fname), self.capture_region(self.regions["全界面"])):
-                self.log(f"[Debug] 已存失败现场截图 debug/snaps/{fname}")
-        except Exception:
-            pass
+            ts = time.strftime("%H%M%S")
+            # ① 整块虚拟桌面
+            try:
+                full = np.array(ImageGrab.grab(all_screens=True))
+                fb = cv2.cvtColor(full, cv2.COLOR_RGB2BGR)
+                self.write_debug_image(
+                    os.path.join(d, f"{ts}_{tag}_ALL_{fb.shape[1]}x{fb.shape[0]}.png"), fb)
+            except Exception as e:
+                self.log(f"[Snap] 整屏截图失败: {e}")
+            # ② 每个显示器各一张 + 亮度
+            try:
+                mons = win32api.EnumDisplayMonitors()
+            except Exception:
+                mons = []
+            for i, mon in enumerate(mons):
+                try:
+                    l, t, r, b = mon[2]
+                    a = cv2.cvtColor(np.array(ImageGrab.grab(bbox=(l, t, r, b), all_screens=True)),
+                                     cv2.COLOR_RGB2BGR)
+                    bri = float(a.mean()) if a.size else -1.0
+                    self.write_debug_image(
+                        os.path.join(d, f"{ts}_{tag}_mon{i}_{r - l}x{b - t}_bri{bri:.0f}.png"), a)
+                    self.log(f"[Snap] mon{i} rect=({l},{t},{r},{b}) 亮度≈{bri:.0f}")
+                except Exception as e:
+                    self.log(f"[Snap] mon{i} 截图失败: {e}")
+            self.log(f"[Snap] 已存多显示器现场图 debug/snaps/{ts}_{tag}_*")
+        except Exception as e:
+            self.log(f"[Snap] 多屏截图异常: {e}")
 
     def on_ai_assist_changed(self):
         enabled = bool(self.var_ai_assist.get())
@@ -2052,6 +2079,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             # 进程还在，使用【高级状态机】尝试动态退回
             if not self.advanced_enter_menu():
                 self.log("高级动态退回失败。已禁用强杀游戏进程，停止脚本并保留游戏运行状态。")
+                self.debug_snap("recovery_fail")
                 return False
         self.log("环境重置成功！即将从中断处继续剩余任务。")
         return True
@@ -2172,6 +2200,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             time.sleep(1.2) # 给游戏一点动画加载时间
 
         self.log("80 次动态尝试均未进入菜单，高级退回失败。")
+        self.debug_snap("advanced_menu_fail")
         return False
     # ==========================================
     # --- 图像寻找 ---
