@@ -172,6 +172,16 @@ class ImageMatcherMixin:
             self.scaled_template_cache.clear()
             self.load_template_file_cache()
 
+    def _warn_capture(self, msg):
+        """截屏异常限频日志（每 5s 最多一条），避免热路径刷屏，又能看清 VDD 断开时间线。"""
+        now = time.time()
+        if now - getattr(self, "_last_capture_warn", 0.0) > 5.0:
+            self._last_capture_warn = now
+            try:
+                self.log(f"[Capture] {msg}")
+            except Exception:
+                pass
+
     def capture_region(self, region=None, mask_areas=None):
         try:
             if region:
@@ -180,10 +190,24 @@ class ImageMatcherMixin:
                 screen = ImageGrab.grab(bbox=bbox, all_screens=True)
             else:
                 screen = ImageGrab.grab(all_screens=True)
-        except Exception:
-            screen = pyautogui.screenshot(region=region)
+        except Exception as e:
+            try:
+                screen = pyautogui.screenshot(region=region)
+            except Exception as e2:
+                # 两种截屏都失败：显示器/Parsec VDD 多半已断开。记日志并返回小黑图，避免上层崩溃。
+                self._warn_capture(f"截屏彻底失败（显示器/VDD 可能已断开）: {e2}")
+                return np.zeros((8, 8, 3), dtype=np.uint8)
 
         screen_bgr = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+
+        # 全黑检测：VDD/显示器断开后常返回纯黑屏 → 识别全失败。记一条(限频)指明时间线。
+        try:
+            if screen_bgr.size and float(screen_bgr.mean()) < 2.0:
+                self._warn_capture(
+                    f"截屏几乎全黑（均值≈0，显示器/Parsec VDD 可能已断开）尺寸="
+                    f"{screen_bgr.shape[1]}x{screen_bgr.shape[0]}")
+        except Exception:
+            pass
 
         # 对指定区域打黑块，避免重复识别同一个目标
         if mask_areas:
