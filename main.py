@@ -2268,6 +2268,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         )
         if not pos_share_dialog:
             self.log("未找到蓝图共享代码输入框")
+            self.debug_snap("sharecode_dialog_fail")   # 在真实失败点存图（恢复前），而非恢复后
             return False
 
         code_text = "".join(c for c in self.entry_share.get() if c.isdigit())
