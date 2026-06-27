@@ -1033,6 +1033,19 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             pass
         return False
 
+    def debug_snap(self, tag):
+        """debug_mode（manualDebug 启动）下，把当前整屏截图存到 debug/snaps/，
+        用于排查"识别失败时屏上到底是什么"——比如关屏/锁屏会截到黑屏，一看便知。"""
+        if not getattr(self, "debug_mode", False):
+            return
+        try:
+            d = os.path.join(get_app_dir(), "debug", "snaps")
+            fname = f"{time.strftime('%H%M%S')}_{tag}.png"
+            if self.write_debug_image(os.path.join(d, fname), self.capture_region(self.regions["全界面"])):
+                self.log(f"[Debug] 已存失败现场截图 debug/snaps/{fname}")
+        except Exception:
+            pass
+
     def on_ai_assist_changed(self):
         enabled = bool(self.var_ai_assist.get())
         self.config["ai_assist"] = enabled
@@ -3124,6 +3137,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             threshold=0.7, timeout=15, interval=0.25, fast_mode=False)
         if not pos_giftbox:
             self.log("[Gift] 未找到礼物箱入口（可能未到车辆页 / 大窗口识别问题）。")
+            self.debug_snap("giftbox_nav_fail")
             return False
         self.game_click(pos_giftbox)
         time.sleep(1.5)
@@ -3469,6 +3483,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             time.sleep(0.8)
         if not found:
             self.log("[Wheelspin] 未能定位「我的地平线」菜单页。")
+            self.debug_snap("wheelspin_menu_fail")
             return False
 
         # 点击对应抽奖入口（用彩色匹配，借助底色区分青色超抽 / 绿色抽奖）。
@@ -3478,6 +3493,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             threshold=0.72, timeout=6, interval=0.3, fast_mode=False)
         if not pos_entry:
             self.log(f"[Wheelspin] 未找到「{mode}」入口图块。")
+            self.debug_snap("wheelspin_entry_fail")
             return False
         self.game_click(pos_entry)
         time.sleep(0.6)   # 入口已触发第1抽，尽快交给 advance_to_result 轮询，别错过首抽的「跳过」窗口
