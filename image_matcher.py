@@ -1573,18 +1573,26 @@ class ImageMatcherMixin:
         y1 = max(0, (h - ch) // 2)
         x1 = max(0, (w - cw) // 2)
         return img[y1:y1 + ch, x1:x1 + cw]
+    # 放大场景下，超过此面积(像素)的【大模板】才用"缩小截图"保质量；小模板放大本就清晰、且省一次整屏 resize。
+    _DOWNSCALE_SRC_AREA = 30000
+
     def _scale_match_inputs(self, screen_gray, tpl_raw, scale):
         """按缩放比准备 (待匹配截图, 待匹配模板, 回映系数 back)。
-        - scale>1（大窗口本需放大模板）→ 改为把【截图】按 1/scale 干净缩小、用【原生模板】匹配，
-          避免用 INTER_AREA 放大模板造成模糊（大照片模板尤其受害，如 BNandUC 在 1.224 下骤降到 0.27）。
-          匹配坐标需 ×back(=scale) 映射回原图。
+        - scale>1：
+            * 大模板(照片卡，面积>阈值)→ 把【截图】按 1/scale 缩小、用原生模板匹配(保质量)。坐标 ×scale 映回。
+              这是为大照片模板放大会糊(如 skillcar/BNandUC)而设。
+            * 小模板(文字/图标)→ 直接把【模板】放大(INTER_LINEAR，不糊)。这样避免对整屏(3840×2160)做 resize，
+              大幅降低高频找图(评价弹窗/restart/start/vramne 等)的开销。back=1。
         - scale==1 → 原生不动。
-        - scale<1（小窗口）→ 沿用原逻辑：按 scale 缩小模板（INTER_AREA 适合缩小）。back=1。
+        - scale<1 → 按 scale 缩小模板(INTER_AREA 适合缩小)。back=1。
         只有 scale>1 才改变行为，所以 ≤2560 的窗口零影响。"""
         if scale > 1.0 + 1e-6:
-            f = 1.0 / scale
-            screen_m = cv2.resize(screen_gray, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
-            return screen_m, tpl_raw, scale
+            if tpl_raw.shape[0] * tpl_raw.shape[1] > self._DOWNSCALE_SRC_AREA:
+                f = 1.0 / scale
+                screen_m = cv2.resize(screen_gray, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+                return screen_m, tpl_raw, scale
+            tpl_m = cv2.resize(tpl_raw, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            return screen_gray, tpl_m, 1.0
         if scale < 1.0 - 1e-6:
             tpl_m = cv2.resize(tpl_raw, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
             return screen_gray, tpl_m, 1.0
