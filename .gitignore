@@ -47,3 +47,6 @@ release/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 内部分析草稿（上游分析报告等），不入库
+.superpowers/
