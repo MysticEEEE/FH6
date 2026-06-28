@@ -2334,6 +2334,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
 
         if not pos_target:
             self.log("未找到带 liketag 的目标车辆，重新选品牌...")
+            self.debug_snap("skillcar_notfound")   # 存实时选车画面，判断是模板过时还是画面/车不对
             self.hw_press("backspace")
             time.sleep(1.2)
 
