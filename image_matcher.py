@@ -736,30 +736,45 @@ class ImageMatcherMixin:
             scales_to_try = self.get_scales_to_try(fast_mode=False)
             best_debug = None
 
-            for scale in scales_to_try:
-                car_tpl, _ = self.get_scaled_template("skillcar.png", scale)
-                tag_tpl, _ = self.get_scaled_template("liketag.png", scale)
-                if car_tpl is None or tag_tpl is None:
-                    continue
+            # 关键修复：liketag 与 skillcar 可能是不同基准(实测 liketag@1.0、skillcar@1.6)，
+            # 旧逻辑强制两者用同一 scale → 永远凑不到同时命中。改为【解耦】：
+            # tag 用自己的 scale 找出所有位置；每个位置再用 car 自己的 scale 在附近独立匹配。
 
-                h_c, w_c = car_tpl.shape[:2]
+            # 1) 找出所有 liketag 位置（tag 各自的最佳 scale）
+            tag_points = []   # (ty, tx, tag_score, th, tw)
+            for ts in scales_to_try:
+                tag_tpl, _ = self.get_scaled_template("liketag.png", ts)
+                if tag_tpl is None:
+                    continue
                 h_t, w_t = tag_tpl.shape[:2]
-                if h_c < 5 or w_c < 5 or h_t < 3 or w_t < 3:
+                if h_t < 3 or w_t < 3 or h_t > screen_bgr.shape[0] or w_t > screen_bgr.shape[1]:
                     continue
-                if h_t > screen_bgr.shape[0] or w_t > screen_bgr.shape[1]:
-                    continue
-
                 tag_res = cv2.matchTemplate(screen_bgr, tag_tpl, cv2.TM_CCOEFF_NORMED)
                 ys, xs = np.where(tag_res >= 0.66)
-                tag_points = [(int(y), int(x), float(tag_res[y, x])) for y, x in zip(ys, xs)]
-                tag_points.sort(key=lambda p: (p[0], p[1], -p[2]))
-                checked_tags = set()
+                for y, x in zip(ys, xs):
+                    tag_points.append((int(y), int(x), float(tag_res[y, x]), h_t, w_t))
+            # 去重(8px 网格)+按分数优先
+            tag_points.sort(key=lambda p: -p[2])
+            uniq, seen = [], set()
+            for tp in tag_points:
+                key = (tp[1] // 8, tp[0] // 8)
+                if key in seen:
+                    continue
+                seen.add(key)
+                uniq.append(tp)
+            if not uniq:
+                self.log("[SkillCar] reverse miss: 未找到 liketag")
+                return None
 
-                for ty, tx, tag_score in tag_points[:80]:
-                    key = (tx // 8, ty // 8)
-                    if key in checked_tags:
+            # 2) 每个 tag 位置，用 car 各自的 scale 在其附近独立匹配
+            for ty, tx, tag_score, h_t, w_t in uniq[:80]:
+                for cs in scales_to_try:
+                    car_tpl, _ = self.get_scaled_template("skillcar.png", cs)
+                    if car_tpl is None:
                         continue
-                    checked_tags.add(key)
+                    h_c, w_c = car_tpl.shape[:2]
+                    if h_c < 5 or w_c < 5:
+                        continue
 
                     sx1 = max(0, int(tx - w_c * 1.10))
                     sy1 = max(0, int(ty - h_c * 1.10))
@@ -777,17 +792,17 @@ class ImageMatcherMixin:
                     rel_x = tx - card_x
                     rel_y = ty - card_y
                     if not (-int(w_c * 0.08) <= rel_x <= int(w_c * 1.08) and -int(h_c * 0.08) <= rel_y <= int(h_c * 1.08)):
-                        best_debug = f"rel invalid tag:{tag_score:.3f} car:{car_score:.3f} rel:{rel_x},{rel_y} scale:{scale:.3f}"
+                        best_debug = f"rel invalid tag:{tag_score:.3f} car:{car_score:.3f} rel:{rel_x},{rel_y} car_scale:{cs:.3f}"
                         continue
                     if car_score < 0.64:
-                        best_debug = f"car low tag:{tag_score:.3f} car:{car_score:.3f} scale:{scale:.3f}"
+                        best_debug = f"car low tag:{tag_score:.3f} car:{car_score:.3f} car_scale:{cs:.3f}"
                         continue
 
                     click_x = card_x + w_c // 2 + (region[0] if region else 0)
                     click_y = card_y + h_c // 2 + (region[1] if region else 0)
                     self.log(
                         f"[SkillCar] reverse hit: tag={tag_score:.3f} car={car_score:.3f} "
-                        f"rel=({rel_x},{rel_y}) scale={scale:.3f}"
+                        f"rel=({rel_x},{rel_y}) car_scale={cs:.3f}"
                     )
                     return (click_x, click_y)
 

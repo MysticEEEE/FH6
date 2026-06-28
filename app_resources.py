@@ -88,18 +88,20 @@ def get_img_path(filename):
         cache[rel_name] = rel_name
         return rel_name
 
-    # 优先读取程序目录外部 images（允许用户替换），保留 obstacles/xxx.png 等子目录结构。
+    # 查找优先级：外部 images/1440P/ (重裁的 2560×1440 原生新图) → 外部 images/ (旧图，回退)
+    # → 内置 images/。这样 1440P 里有就用新的、没有自动回退旧的，可增量更新不怕缺图。
+    # 保留 obstacles/xxx.png 等子目录结构。
     for candidate_name in (rel_name, basename):
-        ext_path = os.path.join(APP_DIR, "images", candidate_name)
-        if os.path.exists(ext_path):
-            cache[rel_name] = ext_path
-            return ext_path
-
-        # 外部没有则读取内置 images
-        int_path = os.path.join(INTERNAL_DIR, "images", candidate_name)
-        if os.path.exists(int_path):
-            cache[rel_name] = int_path
-            return int_path
+        for base_dir in (
+            os.path.join(APP_DIR, "images", "1440P"),
+            os.path.join(APP_DIR, "images"),
+            os.path.join(INTERNAL_DIR, "images", "1440P"),
+            os.path.join(INTERNAL_DIR, "images"),
+        ):
+            p = os.path.join(base_dir, candidate_name)
+            if os.path.exists(p):
+                cache[rel_name] = p
+                return p
 
     cache[rel_name] = filename
     return filename
