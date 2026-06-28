@@ -507,7 +507,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 1.05,
             ]:
                 s = round(float(s), 3)
-                if 0.45 <= s <= 1.8 and s not in scale_candidates:
+                if 0.35 <= s <= 2.6 and s not in scale_candidates:
                     scale_candidates.append(s)
             best = None
 
@@ -538,7 +538,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             # （1851→0.723、3134→1.224 均精确吻合真实匹配缩放比）。故【以几何估计为准】，
             # 锚点匹配仅在「高置信 且 与几何值接近(±8%)」时做微调——避免大窗口下锚点噪声
             # 假峰（如把 1.224 误锁成 0.970）盖过正确值、进而拖垮以它为基准的 panel 匹配。
-            geometric_scale = round(max(0.45, min(1.8, curr_w / 2560.0)), 3)
+            geometric_scale = round(max(0.35, min(2.6, curr_w / 2560.0)), 3)
             preferred_scale = geometric_scale
             anchor_name = best["template"] if best else "none"
             anchor_score = best["score"] if best else 0.0
@@ -593,7 +593,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         except Exception as e:
             # 异常兜底也用几何估计/上次成功值，而非错误的 1.0
             prev_scale = float(self.match_calibration.get("preferred_scale", 0.0) or 0.0)
-            fb_scale = prev_scale if 0.45 <= prev_scale <= 1.8 else round(max(0.45, min(1.8, float(region[2]) / 2560.0)), 3)
+            fb_scale = prev_scale if 0.35 <= prev_scale <= 2.6 else round(max(0.35, min(2.6, float(region[2]) / 2560.0)), 3)
             self.match_calibration.update({
                 "state": "error",
                 "status": "校准失败",
