@@ -260,7 +260,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     def __init__(self):
         super().__init__()
         #窗口相关
-        self.title(f"FH6Auto by Krami v{CURRENT_VERSION}")
+        self.title(f"FH6Auto Mystic v{CURRENT_VERSION}")
         self.geometry("1240x800")
         self.minsize(1120, 760)
         self.attributes("-topmost", False)
