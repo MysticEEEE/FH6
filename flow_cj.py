@@ -584,7 +584,7 @@ def logic_super_wheelspin(self, target_count):
     # get_buy_cj_vehicle_mode 会优先读取流程启动时锁定的 active_buy_cj_vehicle。
     vehicle_mode = self.get_buy_cj_vehicle_mode()
 
-    self.update_running_ui("超级抽奖", self.cj_counter, target_count)
+    self.update_running_ui("刷专精", self.cj_counter, target_count)
     # 【新增】：初始化记忆页码
     if not hasattr(self, 'memory_car_page'):
         self.memory_car_page = 0
@@ -825,8 +825,8 @@ def logic_super_wheelspin(self, target_count):
                     time.sleep(0.8)
                 return True
             self.cj_counter += 1
-            self.update_running_ui("超级抽奖", self.cj_counter, target_count)
-            self.log(f"[进度] 超级抽奖 {self.cj_counter}/{target_count} 完成")
+            self.update_running_ui("刷专精", self.cj_counter, target_count)
+            self.log(f"[进度] 刷专精 {self.cj_counter}/{target_count} 完成")
 
         if not self.return_to_vehicle_menu_after_mastery():
             return False

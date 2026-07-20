@@ -89,6 +89,8 @@ from flow_race import (
     handle_author_prompt as flow_handle_author_prompt,
     logic_race as flow_logic_race,
 )
+from flow_wheelspin import logic_auto_wheelspin as flow_logic_auto_wheelspin
+from wheelspin_logic import wheelspin_default_config
 
 from app_resources import (
     APP_DIR,
@@ -390,7 +392,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         self.task_time_totals = {
             "循环跑图": 0.0,
             "批量买车": 0.0,
-            "超级抽奖": 0.0,
+            "刷专精": 0.0,
             "删除车辆": 0.0,
             "测试启动": 0.0,
             "F3测图": 0.0,
@@ -690,7 +692,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "ai_model_paths": {
                 "subaru": "models/fh6_car_select_yolo.pt",
                 "mazda": "models/fh6_car_select_mazda_yolo.pt"
-            }
+            },
+            **wheelspin_default_config(),
         }
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json，并与底本合并（自动补全缺失项）
@@ -783,6 +786,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.config["cr_amount"] = max(0, int(self.entry_cr_amount.get() or 0))
             if hasattr(self, "entry_race_timeout"):
                 self.config["race_timeout"] = max(60, int(self.entry_race_timeout.get()))
+            if hasattr(self, "entry_wheelspin_max"):
+                self.config["wheelspin_max_count"] = max(0, int(self.entry_wheelspin_max.get() or 0))
             self.config["share_code"] = "".join(c for c in self.entry_share.get() if c.isdigit())
             #self.config["base_width"] = int(self.entry_base_w.get())
         except Exception:
@@ -805,6 +810,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.config["ai_auto_capture"] = self.var_ai_auto_capture.get()
         if hasattr(self, "var_smart_page"):
             self.config["smart_page"] = self.var_smart_page.get()
+        if hasattr(self, "var_wheelspin_mode"):
+            self.config["wheelspin_mode"] = self.var_wheelspin_mode.get()
         if hasattr(self, "var_background_mouse"):
             self.config["background_mouse_enabled"] = bool(self.var_background_mouse.get())
         if hasattr(self, "var_compact_on_run"):
@@ -868,7 +875,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         totals = getattr(self, "task_time_totals", {})
         race_total = totals.get("循环跑图", 0.0)
         buy_total = totals.get("批量买车", 0.0)
-        cj_total = totals.get("超级抽奖", 0.0)
+        cj_total = totals.get("刷专精", 0.0)
         delete_total = totals.get("删除车辆", 0.0)
 
         active_task = getattr(self, "active_task_name", "")
@@ -876,7 +883,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             race_total += task_elapsed
         elif active_task == "批量买车":
             buy_total += task_elapsed
-        elif active_task == "超级抽奖":
+        elif active_task == "刷专精":
             cj_total += task_elapsed
         elif active_task == "删除车辆":
             delete_total += task_elapsed
@@ -2092,7 +2099,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 step_label = {
                     "race": "循环跑图",
                     "buy": "批量买车",
-                    "cj": "超级抽奖",
+                    "cj": "刷专精",
                     "delete": "删除车辆",
                 }[step_name]
                 success = False
@@ -2793,6 +2800,38 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         return flow_select_new_consumable_car_from_list(self)
     def logic_super_wheelspin(self, target_count):
         return flow_logic_super_wheelspin(self, target_count)
+    def logic_auto_wheelspin(self):
+        return flow_logic_auto_wheelspin(self)
+
+    def start_wheelspin_pipeline(self):
+        """GUI「自动抽奖」入口：独立的游戏内转盘抽奖流程（区别于 CJ 技能点刷取）。"""
+        if self.is_running:
+            self.log("已有任务正在运行，无法启动抽奖。")
+            return
+        self.is_running = True
+        self.is_paused = False
+        self._mouse_isolation_dismissed_for_run = False
+        self.save_config()
+        self.reset_run_stats()
+        self.update_running_state("running")
+        self.update_running_ui("自动抽奖", 0, 0)
+        self.update_timer()
+        mode = self.config.get("wheelspin_mode", "抽奖")
+        self.log(f"====== 开始自动抽奖（模式：{mode}） ======")
+
+        def runner():
+            try:
+                if not self.check_and_focus_game():
+                    self.log("未能聚焦游戏窗口，抽奖结束。")
+                    return
+                self.logic_auto_wheelspin()
+            except Exception as e:
+                self.log(f"抽奖流程异常: {e}")
+            finally:
+                self.stop_all()
+
+        self.current_thread = threading.Thread(target=runner, daemon=True)
+        self.current_thread.start()
 if __name__ == "__main__":
     app = FH_UltimateBot()
     app.mainloop()

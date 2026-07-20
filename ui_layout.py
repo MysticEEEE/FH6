@@ -178,8 +178,8 @@ def setup_ui(bot):
     box_cj, bot.btn_cj, bot.entry_cj, bot.lbl_cj = create_task_card(
         bot.config_frame,
         2,
-        "3. 超级抽奖",
-        "技能点与抽奖流程",
+        "3. 刷专精",
+        "车辆精通技能点",
         "开始",
         lambda: bot.start_pipeline("cj"),
         colors["purple"],
@@ -294,8 +294,8 @@ def setup_ui(bot):
     next_row.pack(anchor="w", expand=True)
     for text, var, command in [
         ("跑图➡买车", bot.var_chk1, bot.save_config),
-        ("买车➡抽奖", bot.var_chk2, bot.save_config),
-        ("抽奖➡删车", bot.var_cj_to_delete, bot.save_config),
+        ("买车➡刷专精", bot.var_chk2, bot.save_config),
+        ("刷专精➡删车", bot.var_cj_to_delete, bot.save_config),
         ("删车➡跑图", bot.var_delete_to_race, bot.save_config),
     ]:
         row = ctk.CTkFrame(next_row, fg_color="transparent", width=116, height=38)
@@ -381,6 +381,38 @@ def setup_ui(bot):
         font=font_small,
     )
     bot.sw_compact_on_run.pack(side="right", padx=(0, 12))
+
+    # 自动抽奖：独立的游戏内转盘抽奖（区别于第 3 张卡「刷专精」= 技能点刷取）。
+    bot.wheelspin_frame = card(bot.main_container, height=52, fg_color="#111112")
+    bot.wheelspin_frame.pack(fill="x", pady=(10, 0))
+    bot.wheelspin_frame.pack_propagate(False)
+    label(bot.wheelspin_frame, "自动抽奖", font=font_section).pack(side="left", padx=(16, 14))
+    label(bot.wheelspin_frame, "转盘抽奖 · 独立功能", color=colors["muted"], font=font_small).pack(side="left", padx=(0, 16))
+    bot.var_wheelspin_mode = ctk.StringVar(value=bot.config.get("wheelspin_mode", "抽奖"))
+    bot.seg_wheelspin_mode = ctk.CTkSegmentedButton(
+        bot.wheelspin_frame,
+        values=["抽奖", "超级抽奖"],
+        variable=bot.var_wheelspin_mode,
+        command=lambda _=None: bot.save_config(),
+        height=30,
+        corner_radius=7,
+        fg_color=colors["panel_2"],
+        selected_color=colors["purple"],
+        selected_hover_color=colors["purple_hover"],
+        unselected_color=colors["button"],
+        unselected_hover_color=colors["button_hover"],
+        text_color=colors["text"],
+        font=font_small,
+    )
+    bot.seg_wheelspin_mode.pack(side="left", padx=(0, 16))
+    label(bot.wheelspin_frame, "次数(0=不限)", color=colors["muted"], font=font_small).pack(side="left", padx=(0, 6))
+    bot.entry_wheelspin_max = entry(bot.wheelspin_frame, width=62, height=30)
+    bot.entry_wheelspin_max.insert(0, str(bot.config.get("wheelspin_max_count", 0)))
+    bot.entry_wheelspin_max.pack(side="left", padx=(0, 16))
+    button(
+        bot.wheelspin_frame, "开始", bot.start_wheelspin_pipeline,
+        color=colors["purple"], hover=colors["purple_hover"], width=96, height=32,
+    ).pack(side="right", padx=(0, 14))
 
     bot.runtime_frame = card(bot.main_container, height=66, fg_color="#111112")
     bot.runtime_frame.pack(fill="x", pady=(10, 0))
