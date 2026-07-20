@@ -354,6 +354,12 @@ def setup_ui(bot):
     bot.entry_race_timeout = entry(bot.global_settings_frame, width=68, height=30)
     bot.entry_race_timeout.insert(0, str(bot.config.get("race_timeout", 300)))
     bot.entry_race_timeout.pack(side="left", padx=(0, 16))
+    label(bot.global_settings_frame, "行进键", color=colors["muted"], font=font_small).pack(side="left", padx=(0, 6))
+    _drive_keys = bot.config.get("drive_keys", ["w", "up"])
+    _drive_keys_text = ",".join(str(k) for k in _drive_keys) if isinstance(_drive_keys, (list, tuple)) else str(_drive_keys)
+    bot.entry_drive_keys = entry(bot.global_settings_frame, width=86, height=30)
+    bot.entry_drive_keys.insert(0, _drive_keys_text)
+    bot.entry_drive_keys.pack(side="left", padx=(0, 16))
     bot.sw_diagnostic_mode = ctk.CTkSwitch(
         bot.global_settings_frame,
         text="诊断模式",

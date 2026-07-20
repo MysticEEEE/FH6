@@ -386,8 +386,7 @@ def logic_race(self, target_count):
         if not _interruptible_wait(self, load_seconds):
             return False
 
-        self.hw_key_down("w")
-        self.hw_key_down("up")
+        self.set_drive_keys_down()
         driving_keys_held = True
         race_start_time = time.time()
         last_health_check = race_start_time
@@ -403,13 +402,11 @@ def logic_race(self, target_count):
             while self.is_running:
                 if self.is_paused:
                     if driving_keys_held:
-                        self.hw_key_up("w")
-                        self.hw_key_up("up")
+                        self.set_drive_keys_up()
                         driving_keys_held = False
                     self.check_pause()
                     if self.is_running:
-                        self.hw_key_down("w")
-                        self.hw_key_down("up")
+                        self.set_drive_keys_down()
                         driving_keys_held = True
                     race_start_time = time.time()
                     last_health_check = race_start_time
@@ -436,8 +433,7 @@ def logic_race(self, target_count):
             # Any exception, stop or early recovery must release the two held
             # driving keys. Otherwise the background repeat thread can keep the
             # car accelerating after the race flow has already aborted.
-            self.hw_key_up("w")
-            self.hw_key_up("up")
+            self.set_drive_keys_up()
             driving_keys_held = False
 
         if not self.is_running:
@@ -533,8 +529,7 @@ def handle_author_prompt(self, release_drive_keys=False):
         self.log("未出现赛事评价弹窗，继续后续流程。", level="DEBUG")
         return False
     if release_drive_keys:
-        self.hw_key_up("w")
-        self.hw_key_up("up")
+        self.set_drive_keys_up()
     self.log("已识别赛事评价弹窗，执行点赞确认。")
     for _ in range(2):
         if not self.is_running:

@@ -674,6 +674,7 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             "share_code": "103435586",
             "cr_amount": 0,
             "auto_restart": False,
+            "drive_keys": ["w", "up"],
             "background_mouse_enabled": True,
             "background_capture_enabled": True,
             "background_keyboard_enabled": True,
@@ -788,6 +789,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.config["race_timeout"] = max(60, int(self.entry_race_timeout.get()))
             if hasattr(self, "entry_wheelspin_max"):
                 self.config["wheelspin_max_count"] = max(0, int(self.entry_wheelspin_max.get() or 0))
+            if hasattr(self, "entry_drive_keys"):
+                self.config["drive_keys"] = self.parse_key_list(self.entry_drive_keys.get(), default=["w", "up"])
             self.config["share_code"] = "".join(c for c in self.entry_share.get() if c.isdigit())
             #self.config["base_width"] = int(self.entry_base_w.get())
         except Exception:
@@ -1135,6 +1138,36 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         ii_.ki = KeyBdInput(0, scan_code, flags, 0, ctypes.pointer(extra))
         x = Input(ctypes.c_ulong(1), ii_)
         SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
+    # --- 可配置行进键（改键设置）：默认 W + 方向上键，可在“守护设置”里改 ---
+    def parse_key_list(self, raw_value, default=None):
+        default = default or []
+        if isinstance(raw_value, (list, tuple)):
+            raw_items = raw_value
+        else:
+            normalized = str(raw_value or "").lower()
+            for sep in ["，", "、", ";", "+", "|", "\n", "\t"]:
+                normalized = normalized.replace(sep, ",")
+            normalized = normalized.replace(" ", ",")
+            raw_items = normalized.split(",")
+        keys = []
+        for item in raw_items:
+            key = str(item).strip().lower()
+            if not key or key not in DIK_CODES or key in keys:
+                continue
+            keys.append(key)
+        return keys or list(default)
+
+    def get_drive_keys(self):
+        return self.parse_key_list(self.config.get("drive_keys", ["w", "up"]), default=["w", "up"])
+
+    def set_drive_keys_down(self):
+        for key in self.get_drive_keys():
+            self.hw_key_down(key)
+
+    def set_drive_keys_up(self):
+        for key in self.get_drive_keys():
+            self.hw_key_up(key)
 
     def hw_press(self, key, delay=0.08):
         self.check_pause()  # <--- 【新增】如果正在暂停，脚本会在此处无限等待直到恢复
@@ -2306,6 +2339,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                             last_f9_time = now
                             self._developer_f9_last_time = now
                             self.ui_call(open_developer_text_editor, self)
+                    else:
+                        self.on_debug_hotkey(k)
                 except Exception as exc:
                     self.ui_call(
                         self.log,
@@ -2318,6 +2353,11 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 listener.join()
 
         threading.Thread(target=hotkey_thread, daemon=True).start()
+
+    def on_debug_hotkey(self, k):
+        """基类无调试热键（no-op）。tools/manualDebug.py 的 FH_DebugBot 子类重写，
+        注入 F3-F7 测试键。纯净版 `python main.py` 不触发任何调试行为。"""
+        pass
 
 
     # ==========================================
