@@ -2062,18 +2062,17 @@ class FH_UltimateBot(
 
     def set_english_input(self):
         try:
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            hwnd = getattr(self, "game_hwnd", None) or ctypes.windll.user32.GetForegroundWindow()
             if not hwnd:
                 return
-            # 策略1:尝试切美式键盘
-            hkl = ctypes.windll.user32.LoadKeyboardLayoutW("00000409", 1)
-            ctypes.windll.user32.PostMessageW(hwnd, 0x0050, 0, hkl)
-            # 策略2:底层强制关闭当前中文输入法的中文状态(绝杀)
+            # 只关闭游戏窗口的中文输入法开启状态（IMC_SETOPENSTATUS）。
+            # 【不再】LoadKeyboardLayout 切美式键盘——那会让 Windows 反复往语言列表添加多余的
+            # 美式英语键盘（后台输入走 WM_CHAR/扫描码，不依赖键盘布局）。
             WM_IME_CONTROL = 0x0283
             IMC_SETOPENSTATUS = 0x0006
             ctypes.windll.user32.SendMessageW(hwnd, WM_IME_CONTROL, IMC_SETOPENSTATUS, 0)
 
-            self.log("已自动切换英文键盘/关闭中文输入法状态。")
+            self.log("已关闭游戏窗口中文输入法状态。")
         except Exception as e:
             self.log(f"自动防中文输入设置失败: {e}")
 
