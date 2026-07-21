@@ -345,6 +345,8 @@ def _navigate_to_eventlab_challenge(self, navigation_state="roam"):
         self.log("分享码为空，无法搜索挑战。", level="WARN")
         return False
     self.log(f"输入挑战分享码: {code_text}")
+    # 输入前再确保英文输入法（后台模式下焦点/输入法可能已漂移，防数字被中文输入法吞掉）
+    self.set_english_input(quiet=True)
     for char in code_text:
         if not self.is_running:
             return False

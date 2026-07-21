@@ -27,4 +27,7 @@ def wheelspin_default_config():
         "wheelspin_max_count": 0,
         # 「已拥有车辆」对话框中，从默认高亮项按几次「下」到「出售」项。
         "wheelspin_owned_downs": 2,
+        # 是否卖出重复车。True=检测到「已拥有」时下移到「出售」卖出；
+        # False=不卖，按默认高亮「添加至车库」入库，跳过卖车判断，只计抽奖次数。
+        "wheelspin_sell_dupes": True,
     }

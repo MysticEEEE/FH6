@@ -815,6 +815,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             self.config["smart_page"] = self.var_smart_page.get()
         if hasattr(self, "var_wheelspin_mode"):
             self.config["wheelspin_mode"] = self.var_wheelspin_mode.get()
+        if hasattr(self, "var_wheelspin_sell"):
+            self.config["wheelspin_sell_dupes"] = bool(self.var_wheelspin_sell.get())
         if hasattr(self, "var_background_mouse"):
             self.config["background_mouse_enabled"] = bool(self.var_background_mouse.get())
         if hasattr(self, "var_compact_on_run"):
@@ -2364,9 +2366,11 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
     # --- 逻辑保障 ---
     # ==========================================
     # 【新增】：强制切换英文键盘与关闭中文状态
-    def set_english_input(self):
+    def set_english_input(self, quiet=False):
         try:
-            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            # 后台模式下游戏不在前台，GetForegroundWindow 会拿到脚本自身/桌面窗口，
+            # 导致输入法状态改错窗口、蓝图数字仍被中文输入法吞掉。优先打游戏窗口句柄。
+            hwnd = getattr(self, "game_hwnd", None) or ctypes.windll.user32.GetForegroundWindow()
             if not hwnd:
                 return
             # 策略1：尝试切美式键盘
@@ -2377,7 +2381,8 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
             IMC_SETOPENSTATUS = 0x0006
             ctypes.windll.user32.SendMessageW(hwnd, WM_IME_CONTROL, IMC_SETOPENSTATUS, 0)
 
-            self.log("已自动切换英文键盘/关闭中文输入法状态。")
+            if not quiet:
+                self.log("已自动切换英文键盘/关闭中文输入法状态。")
         except Exception as e:
             self.log(f"自动防中文输入设置失败: {e}")
     def check_and_focus_game(self, focus_game=True, quiet=False, calibrate=True):

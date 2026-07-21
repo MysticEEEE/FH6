@@ -89,6 +89,7 @@ def wheelspin_advance_to_result(self, budget=22.0):
       跳过(skip，左下提示区)        → 点击（1s 冷却），逐个跳过动画
       退回菜单(menu)               → 返回 False（每 ~1s 查一次，避免拖慢轮询）"""
     downs = int(self.config.get("wheelspin_owned_downs", 2))
+    sell_dupes = bool(self.config.get("wheelspin_sell_dupes", True))
     deadline = time.time() + budget
     last_click = 0.0
     last_menu_check = 0.0
@@ -101,13 +102,20 @@ def wheelspin_advance_to_result(self, budget=22.0):
         if self.find_image_gray("wheelspin/respin.png", region=prompt,
                                 threshold=0.7, fast_mode=True):
             return True
-        # 2. 途中弹「已拥有车辆」→ 出售（仅确实检测到才按方向键，绝不盲按）
+        # 2. 途中弹「已拥有车辆」→ 卖出 / 入库（仅确实检测到才按方向键，绝不盲按）
         if self.find_image_gray("wheelspin/owned.png", region=self.regions["全界面"],
                                 threshold=0.7, fast_mode=True):
-            self.log("[Wheelspin] 检测到「已拥有车辆」→ 出售重复车。")
-            for _ in range(downs):
-                self.hw_press("down", delay=0.12)
-                time.sleep(0.2)
+            if sell_dupes:
+                self.log("[Wheelspin] 检测到「已拥有车辆」→ 出售重复车。")
+                for _ in range(downs):
+                    self.hw_press("down", delay=0.12)
+                    time.sleep(0.2)
+            else:
+                # 不卖车：上移到顶部项「添加至车库」（菜单顶部会 clamp），普通/超级抽奖都可靠入库
+                self.log("[Wheelspin] 检测到「已拥有车辆」→ 添加至车库（不卖车）。")
+                for _ in range(downs):
+                    self.hw_press("up", delay=0.12)
+                    time.sleep(0.2)
             self.hw_press("enter", delay=0.12)
             time.sleep(0.8)
             continue
@@ -166,8 +174,10 @@ def handle_owned_car_dialog(self):
     故循环处理直到检测不到为止。返回处理过的对话框数量。
 
     安全闸门：仅在【确实检测到】对话框时才用方向键+enter，绝不盲按。
-    从默认高亮项按 wheelspin_owned_downs 次「下」到「出售」，再 enter 卖出。"""
+    卖车开关开：按 wheelspin_owned_downs 次「下」到「出售」卖出；
+    关：按同样次数「上」到顶部「添加至车库」入库。"""
     downs = int(self.config.get("wheelspin_owned_downs", 2))
+    sell_dupes = bool(self.config.get("wheelspin_sell_dupes", True))
     handled = 0
     for idx in range(4):  # 安全上限：最多连续处理 4 个对话框
         if not self.is_running:
@@ -179,10 +189,16 @@ def handle_owned_car_dialog(self):
                 "wheelspin/owned.png", region=self.regions["全界面"],
                 threshold=0.7, timeout=timeout, interval=0.2, fast_mode=True):
             break
-        self.log("[Wheelspin] 检测到「已拥有车辆」→ 选择「出售」卖出重复车。")
-        for _ in range(downs):
-            self.hw_press("down", delay=0.12)
-            time.sleep(0.25)
+        if sell_dupes:
+            self.log("[Wheelspin] 检测到「已拥有车辆」→ 选择「出售」卖出重复车。")
+            for _ in range(downs):
+                self.hw_press("down", delay=0.12)
+                time.sleep(0.25)
+        else:
+            self.log("[Wheelspin] 检测到「已拥有车辆」→ 添加至车库（不卖车）。")
+            for _ in range(downs):
+                self.hw_press("up", delay=0.12)
+                time.sleep(0.25)
         self.hw_press("enter", delay=0.12)
         time.sleep(1.0)
         handled += 1

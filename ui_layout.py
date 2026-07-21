@@ -415,6 +415,15 @@ def setup_ui(bot):
     bot.entry_wheelspin_max = entry(bot.wheelspin_frame, width=62, height=30)
     bot.entry_wheelspin_max.insert(0, str(bot.config.get("wheelspin_max_count", 0)))
     bot.entry_wheelspin_max.pack(side="left", padx=(0, 16))
+    bot.var_wheelspin_sell = ctk.BooleanVar(value=bot.config.get("wheelspin_sell_dupes", True))
+    ctk.CTkSwitch(
+        bot.wheelspin_frame,
+        text="卖出重复车",
+        variable=bot.var_wheelspin_sell,
+        command=bot.save_config,
+        progress_color=colors["purple"],
+        font=font_small,
+    ).pack(side="left", padx=(0, 16))
     button(
         bot.wheelspin_frame, "开始", bot.start_wheelspin_pipeline,
         color=colors["purple"], hover=colors["purple_hover"], width=96, height=32,

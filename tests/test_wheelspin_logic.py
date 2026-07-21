@@ -37,7 +37,8 @@ class TestDefaultConfig(unittest.TestCase):
     def test_defaults(self):
         self.assertEqual(
             wheelspin_default_config(),
-            {"wheelspin_mode": "抽奖", "wheelspin_max_count": 0, "wheelspin_owned_downs": 2},
+            {"wheelspin_mode": "抽奖", "wheelspin_max_count": 0,
+             "wheelspin_owned_downs": 2, "wheelspin_sell_dupes": True},
         )
 
 
