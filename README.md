@@ -1,8 +1,14 @@
-# FH6Auto - 后台模式版
+# FH6Auto Mystic v5.0.0（后台模式版 · deYangar 基座）
 
 基于 **Python + 图像识别 + 后台输入** 的 FH6 视觉自动化工具。
 
-**本版本核心改动**: 截图和输入全部后台化,游戏窗口无需在前台即可运行。集成 PP-OCRv6 ONNX 引擎（det + rec）识别比赛结果和按钮文字。
+> 本仓库是 **MysticEEEE fork**，基于 [deYangar/FH6_Auto](https://github.com/deYangar/FH6_Auto)（v1.2.10.0）维护。在完整继承其后台运行（PrintWindow + PostMessage）、PP-OCRv6 OCR 识别、自愈恢复等能力的基础上，融合了本 fork 独有的功能：
+> - **转盘抽奖（自动抽奖）**：独立的游戏内老虎机抽奖流程，支持「抽奖/超级抽奖」，含**「卖出重复车」开关**（关则全部入库）。
+> - **可配置行进键**：跑图行进键默认 W+方向上键，可在「循环与守护设置」里自定义。
+> - **manualDebug 调试版**（`python manualDebug.py`）：F4 抽奖调试 / F5 OCR 探针 / F6 截图 / F7 诊断打包。
+> - 未启用 deYangar 的 DLL 焦点 hook（默认关，零反作弊风险）。
+
+**deYangar 基座核心**: 截图和输入全部后台化,游戏窗口无需在前台即可运行。集成 PP-OCRv6 ONNX 引擎（det + rec）识别比赛结果和按钮文字。
 
 > 本项目仅供 Python 自动化技术交流与学习使用。
 

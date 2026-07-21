@@ -386,8 +386,7 @@ class RaceMixin:
                 time.sleep(0.5)
 
             # 开始驾驶：W + Up
-            self.hw_key_down("w")
-            self.hw_key_down("up")
+            self.set_drive_keys_down()
             driving_keys_held = True
 
             # 初始化计时器
@@ -405,13 +404,11 @@ class RaceMixin:
                 # 暂停处理
                 if self.is_paused:
                     if driving_keys_held:
-                        self.hw_key_up("w")
-                        self.hw_key_up("up")
+                        self.set_drive_keys_up()
                         driving_keys_held = False
                     self.check_pause()
                     if self.is_running:
-                        self.hw_key_down("w")
-                        self.hw_key_down("up")
+                        self.set_drive_keys_down()
                         driving_keys_held = True
                     race_start_time = time.time()
                     last_vram_chk = time.time()
@@ -453,8 +450,7 @@ class RaceMixin:
                         self.log(f"[OCR-TRACEBACK]\n{traceback.format_exc()}")
                         ocr_result = None
                     if ocr_result in ("enter", "esc"):
-                        self.hw_key_up("w")
-                        self.hw_key_up("up")
+                        self.set_drive_keys_up()
                         driving_keys_held = False
 
                         self.log(f"比赛结束，按 {ocr_result.upper()}...")
@@ -481,8 +477,7 @@ class RaceMixin:
                 stuck_timeout = max(10, int(self.config.get("stuck_timeout", 60)))
                 if now - race_start_time > stuck_timeout:
                     self.log(f"已 {stuck_timeout} 秒未检测到比赛结果，尝试按 ESC 检查主菜单...")
-                    self.hw_key_up("w")
-                    self.hw_key_up("up")
+                    self.set_drive_keys_up()
                     driving_keys_held = False
                     if self.bg_input:
                         self.bg_input.release_all()
@@ -501,15 +496,13 @@ class RaceMixin:
                         break
                     else:
                         self.log("未检测到主菜单，恢复驾驶继续跑图...")
-                        self.hw_key_down("w")
-                        self.hw_key_down("up")
+                        self.set_drive_keys_down()
                         driving_keys_held = True
                         race_start_time = time.time()
                         last_vram_chk = time.time()
 
             # 确保按键释放
-            self.hw_key_up("w")
-            self.hw_key_up("up")
+            self.set_drive_keys_up()
             if self.bg_input:
                 self.bg_input.release_all()
                 self.log("🧹 已强制释放所有按键")
@@ -591,8 +584,7 @@ class RaceMixin:
             return False
 
         if release_drive_keys:
-            self.hw_key_up("w")
-            self.hw_key_up("up")
+            self.set_drive_keys_up()
 
         self.log(f"OCR 识别到赛事评价弹窗，执行点踩 (text={like_text[:40]})")
         self.hw_press("down")  # 默认高亮"点赞"，下移一格到"点踩"

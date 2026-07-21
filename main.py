@@ -29,7 +29,7 @@ import threading
 import focus_hook_manager
 
 from config import (
-    APP_DIR, INTERNAL_DIR, USER_CONFIG_FILE, CURRENT_VERSION,
+    APP_DIR, INTERNAL_DIR, USER_CONFIG_FILE, CURRENT_VERSION, MYSTIC_VERSION,
     auto_extract_configs, auto_extract_images, get_asset_path,
     set_scheme_dir
 )
@@ -46,6 +46,8 @@ from filter_nav import (
     FilterNavMixin,
     DEFAULT_SELL_FILTER_SCHEME1, DEFAULT_SELL_FILTER_SCHEME2, DEFAULT_RACE_FILTER,
 )
+from wheelspin_flow import WheelspinMixin
+from wheelspin_logic import wheelspin_default_config
 
 # 方案同步字段清单：_sync_to_current_scheme 把顶层配置写回当前方案时用。
 # 注意：save_config() 里用控件保存的字段必须与此清单保持一致（新增方案字段时两处同改）。
@@ -65,13 +67,13 @@ ctk.set_default_color_theme("blue")
 class FH_UltimateBot(
     InputMixin, VisionMixin, RecoveryMixin,
     RaceMixin, BuyMixin, CJMixin, SellMixin, AntiCheatMixin,
-    FilterNavMixin,
+    FilterNavMixin, WheelspinMixin,
     ctk.CTk
 ):
     def __init__(self):
         super().__init__()
         #窗口相关
-        self.title(f"FH6Auto v{CURRENT_VERSION}")
+        self.title(f"FH6Auto Mystic v{MYSTIC_VERSION} (deyangar {CURRENT_VERSION})")
         self.geometry("1360x760")
         self.minsize(1180, 700)
         self.attributes("-topmost", False)
@@ -347,6 +349,7 @@ class FH_UltimateBot(
             "skill_dirs": ["up", "up", "up", "right", "right"],
             "share_code": "167982162",
             "auto_restart": False,
+            "drive_keys": ["w", "up"],
             "restart_cmd": "start steam://run/2483190",
             "race_timeout": 600,
             "stuck_timeout": 60,
@@ -358,7 +361,8 @@ class FH_UltimateBot(
             "diagnostic_mode": False,
             "sell_count": 30,
             "chk_4": True,
-            "next_4": 1
+            "next_4": 1,
+            **wheelspin_default_config(),
         }
         ext_path = USER_CONFIG_FILE
         # 2. 读取用户的 config.json,并与底本合并(自动补全缺失项)
@@ -430,6 +434,36 @@ class FH_UltimateBot(
         except Exception as e:
             self.log(f"配置文件写入失败: {e}", level="ERROR")
 
+    # --- 可配置行进键（改键设置）：默认 W + 方向上键，可在「循环与守护设置」里改 ---
+    def parse_key_list(self, raw_value, default=None):
+        default = default or []
+        if isinstance(raw_value, (list, tuple)):
+            raw_items = raw_value
+        else:
+            normalized = str(raw_value or "").lower()
+            for sep in ["，", "、", ";", "+", "|", "\n", "\t"]:
+                normalized = normalized.replace(sep, ",")
+            normalized = normalized.replace(" ", ",")
+            raw_items = normalized.split(",")
+        keys = []
+        for item in raw_items:
+            key = str(item).strip().lower()
+            if not key or key not in DIK_CODES or key in keys:
+                continue
+            keys.append(key)
+        return keys or list(default)
+
+    def get_drive_keys(self):
+        return self.parse_key_list(self.config.get("drive_keys", ["w", "up"]), default=["w", "up"])
+
+    def set_drive_keys_down(self):
+        for key in self.get_drive_keys():
+            self.hw_key_down(key)
+
+    def set_drive_keys_up(self):
+        for key in self.get_drive_keys():
+            self.hw_key_up(key)
+
     def save_config(self):
         # 每个配置项独立 try/except，避免单项失败导致后续全部不保存
         def _save_int(key, entry_widget, min_val=None, default=None):
@@ -468,6 +502,14 @@ class FH_UltimateBot(
             _save_int("next_4", self.entry_next4)
         if hasattr(self, "entry_sc"):
             _save_int("sell_count", self.entry_sc)
+        if hasattr(self, "entry_wheelspin_max"):
+            _save_int("wheelspin_max_count", self.entry_wheelspin_max, min_val=0, default=0)
+        if hasattr(self, "var_wheelspin_mode"):
+            self.config["wheelspin_mode"] = self.var_wheelspin_mode.get()
+        if hasattr(self, "var_wheelspin_sell"):
+            self.config["wheelspin_sell_dupes"] = bool(self.var_wheelspin_sell.get())
+        if hasattr(self, "entry_drive_keys"):
+            self.config["drive_keys"] = self.parse_key_list(self.entry_drive_keys.get(), default=["w", "up"])
 
         self.config["chk_1"] = self.var_chk1.get()
         self.config["chk_2"] = self.var_chk2.get()
@@ -1141,6 +1183,41 @@ class FH_UltimateBot(
         self.next_frame4, self.entry_next4, self.chk4 = create_next_step(
             self.config_frame, self.var_chk4, self.config.get("next_4", 1)
         )
+
+        # ====== 自动抽奖控制条（独立转盘抽奖，区别于 CJ 刷专精）======
+        self.wheelspin_frame = ctk.CTkFrame(self, fg_color="#18202B", height=48, corner_radius=8)
+        self.wheelspin_frame.pack(fill="x", padx=16, pady=(10, 0))
+        self.wheelspin_frame.pack_propagate(False)
+        ctk.CTkLabel(
+            self.wheelspin_frame, text="自动抽奖",
+            font=ctk.CTkFont(weight="bold", size=15), text_color="#BF5AF2",
+        ).pack(side="left", padx=(16, 14))
+        ctk.CTkLabel(self.wheelspin_frame, text="转盘抽奖·独立功能").pack(side="left", padx=(0, 12))
+        self.var_wheelspin_mode = ctk.StringVar(value=self.config.get("wheelspin_mode", "抽奖"))
+        self.seg_wheelspin_mode = ctk.CTkSegmentedButton(
+            self.wheelspin_frame, values=["抽奖", "超级抽奖"],
+            variable=self.var_wheelspin_mode, command=lambda _=None: self.save_config(),
+            height=28,
+        )
+        self.seg_wheelspin_mode.pack(side="left", padx=(0, 14))
+        ctk.CTkLabel(self.wheelspin_frame, text="次数(0=不限):").pack(side="left", padx=(0, 5))
+        self.entry_wheelspin_max = ctk.CTkEntry(self.wheelspin_frame, width=62, height=28, justify="center", corner_radius=6)
+        self.entry_wheelspin_max.insert(0, str(self.config.get("wheelspin_max_count", 0)))
+        self.entry_wheelspin_max.pack(side="left", padx=(0, 14))
+        self.entry_wheelspin_max.bind("<FocusOut>", lambda e: self.save_config())
+        self.entry_wheelspin_max.bind("<Return>", lambda e: self.save_config())
+        self.var_wheelspin_sell = ctk.BooleanVar(value=self.config.get("wheelspin_sell_dupes", True))
+        self.cb_wheelspin_sell = ctk.CTkCheckBox(
+            self.wheelspin_frame, text="卖出重复车",
+            variable=self.var_wheelspin_sell, command=self.save_config,
+        )
+        self.cb_wheelspin_sell.pack(side="left", padx=(0, 14))
+        self.btn_wheelspin = ctk.CTkButton(
+            self.wheelspin_frame, text="开始", fg_color="#8E44AD", hover_color="#8E44AD",
+            command=self.start_wheelspin_pipeline, width=96, height=30, corner_radius=8,
+        )
+        self.btn_wheelspin.pack(side="right", padx=(0, 14))
+
         # ====== 抽离到底部的全局设置栏 (放在上方) ======
         # 【修改1】把 self.top_container 改成了 self
         self.global_settings_frame = ctk.CTkFrame(self, fg_color="#18202B", height=48, corner_radius=8)
@@ -1163,6 +1240,14 @@ class FH_UltimateBot(
         self.entry_stuck_timeout.pack(side="left", padx=(0, 16))
         self.entry_stuck_timeout.bind("<FocusOut>", lambda e: self.save_config())
         self.entry_stuck_timeout.bind("<Return>", lambda e: self.save_config())
+        ctk.CTkLabel(self.global_settings_frame, text="行进键:").pack(side="left", padx=(0, 5))
+        _dk = self.config.get("drive_keys", ["w", "up"])
+        _dk_text = ",".join(str(k) for k in _dk) if isinstance(_dk, (list, tuple)) else str(_dk)
+        self.entry_drive_keys = ctk.CTkEntry(self.global_settings_frame, width=76, height=28, justify="center", corner_radius=6)
+        self.entry_drive_keys.insert(0, _dk_text)
+        self.entry_drive_keys.pack(side="left", padx=(0, 16))
+        self.entry_drive_keys.bind("<FocusOut>", lambda e: self.save_config())
+        self.entry_drive_keys.bind("<Return>", lambda e: self.save_config())
         self.var_auto_restart = ctk.BooleanVar(value=self.config.get("auto_restart", True))
         self.cb_auto_restart = ctk.CTkCheckBox(self.global_settings_frame, text="闪退自动重启", variable=self.var_auto_restart)
         self.cb_auto_restart.pack(side="left", padx=(4, 12))
@@ -1962,11 +2047,18 @@ class FH_UltimateBot(
                     self.toggle_pause()
                 elif k == keyboard.Key.f3:  # <--- 【新增】F3 测试找图
                     self.start_test_find_image()
+                else:
+                    self.on_debug_hotkey(k)
 
             with keyboard.Listener(on_press=on_press) as listener:
                 listener.join()
 
         threading.Thread(target=hotkey_thread, daemon=True).start()
+
+    def on_debug_hotkey(self, k):
+        """基类无调试热键（no-op）。manualDebug.py 的 FH_DebugBot 子类重写，
+        注入 F4-F7 测试键。纯净版 `python main.py` 不触发任何调试行为。"""
+        pass
 
     def set_english_input(self):
         try:
