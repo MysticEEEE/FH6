@@ -1,4 +1,4 @@
-# FH6Auto v4.3 · Mystic fork
+# FH6Auto v4.3.1 · Mystic fork
 
 测试这东西是很麻烦的，电脑和电脑之间的差距比我和吴彦祖的差距都大，所以遇到问题多反馈多贴日志和图片。
 

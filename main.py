@@ -274,6 +274,15 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
         except Exception:
             pass
 
+        # 清理历史累积的多余美式英语键盘（set_english_input 的 LoadKeyboardLayout 会往系统
+        # 输入法列表反复加）；并注册退出时再清一次，避免本次运行新加的残留在系统里。
+        try:
+            import atexit
+            self.remove_extra_english_keyboard(quiet=False)
+            atexit.register(self.remove_extra_english_keyboard)
+        except Exception:
+            pass
+
         self.is_running = False
         self.current_thread = None
         self.is_paused = False  # <--- 【新增】全局暂停状态
@@ -2385,6 +2394,49 @@ class FH_UltimateBot(ImageMatcherMixin, ctk.CTk):
                 self.log("已自动切换英文键盘/关闭中文输入法状态。")
         except Exception as e:
             self.log(f"自动防中文输入设置失败: {e}")
+
+    def remove_extra_english_keyboard(self, quiet=True):
+        """清理 set_english_input 里 LoadKeyboardLayout 反复给系统
+        HKCU\\Keyboard Layout\\Preload 加进去的多余美式英语键盘(00000409)。
+        安全闸门：仅当用户主键盘(Preload '1')不是英语时，才移除其它 00000409 项并重排；
+        若用户本就以美式键盘为主键盘则完全不动，避免误删用户自己要用的键盘。"""
+        try:
+            import winreg
+            US = "00000409"
+            path = r"Keyboard Layout\Preload"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_ALL_ACCESS) as key:
+                items = {}
+                i = 0
+                while True:
+                    try:
+                        name, val, _ = winreg.EnumValue(key, i)
+                        items[name] = str(val)
+                        i += 1
+                    except OSError:
+                        break
+                if items.get("1", "").lower() == US.lower():
+                    return  # 用户主键盘就是美式英语，不动
+                ordered = sorted((n for n in items if n.isdigit()), key=lambda x: int(x))
+                kept = [items[n] for n in ordered
+                        if not (n != "1" and items[n].lower() == US.lower())]
+                if len(kept) == len(ordered):
+                    return  # 没有多余英语键盘
+                for n in ordered:
+                    try:
+                        winreg.DeleteValue(key, n)
+                    except OSError:
+                        pass
+                for idx, val in enumerate(kept, start=1):
+                    winreg.SetValueEx(key, str(idx), 0, winreg.REG_SZ, val)
+            removed = len(ordered) - len(kept)
+            if not quiet:
+                self.log(f"已清理系统中多余的美式英语键盘 {removed} 个（注册表 Preload）。")
+        except Exception as e:
+            if not quiet:
+                try:
+                    self.log(f"清理多余英语键盘失败: {e}")
+                except Exception:
+                    pass
     def check_and_focus_game(self, focus_game=True, quiet=False, calibrate=True):
         if not quiet:
             self.log("检查游戏进程 (forzahorizon6.exe)...")
